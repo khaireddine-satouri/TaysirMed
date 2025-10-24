@@ -9,15 +9,17 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
   const [password, setPassword] = useState("");
   const [typeClient, setTypeClient] = useState<"soignant" | "medecin">("soignant");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSuccess("");
     setLoading(true);
 
     try {
-      // Étape 1 : inscription Auth avec meta
+      // Étape 1 : création utilisateur Auth
       const { data, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
@@ -25,7 +27,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
           data: {
             nom,
             prenom,
-            type_utilisateur: "admin", // admin par défaut pour le créateur
+            type_utilisateur: "admin",
             type_client: typeClient,
           },
         },
@@ -34,16 +36,19 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
       if (signUpError) throw signUpError;
       if (!data.user) throw new Error("Utilisateur non créé");
 
-      // Étape 2 : créer automatiquement le client et lier à users_base
+      // Étape 2 : créer client + lier user
       const { error: rpcError } = await supabase.rpc("bootstrap_create_client_for_current_user", {
         p_nom: nom,
         p_prenom: prenom,
       });
-
       if (rpcError) throw rpcError;
 
-      alert("Compte créé avec succès. Vous pouvez vous connecter.");
-      onSwitchToLogin();
+      // Message discret de succès
+      setSuccess("Compte créé avec succès. Vous pouvez maintenant vous connecter.");
+      // Bascule automatique après 1s
+      setTimeout(() => {
+        onSwitchToLogin();
+      }, 1000);
     } catch (err: any) {
       console.error("Erreur signup:", err);
       setError(err.message || "Erreur lors de la création du compte.");
@@ -79,7 +84,6 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
                 onChange={(e) => setNom(e.target.value)}
                 required
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
-                placeholder="Votre nom"
               />
             </div>
 
@@ -95,7 +99,6 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
                 onChange={(e) => setPrenom(e.target.value)}
                 required
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
-                placeholder="Votre prénom"
               />
             </div>
 
@@ -111,7 +114,6 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
-                placeholder="votre@email.com"
               />
             </div>
 
@@ -127,7 +129,6 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
-                placeholder="••••••••"
               />
             </div>
 
@@ -169,10 +170,15 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
               </div>
             </fieldset>
 
-            {/* Error message */}
+            {/* Messages */}
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
                 {error}
+              </div>
+            )}
+            {success && (
+              <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
+                {success}
               </div>
             )}
 
@@ -186,7 +192,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
             </button>
           </form>
 
-          {/* Switch vers Login */}
+          {/* Switch */}
           <p className="text-center text-sm text-gray-600">
             Déjà un compte ?{" "}
             <button onClick={onSwitchToLogin} className="text-teal-600 hover:underline">
