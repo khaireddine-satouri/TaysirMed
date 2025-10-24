@@ -1,44 +1,35 @@
-// src/components/layouts/SoignantLayout.tsx
-import { ReactNode, useEffect, useState } from 'react';
-import {
-  Send, Inbox, Bell, LogOut, Users, FileText,
-  Calendar, Settings, BarChart3, CalendarRange, X
-} from 'lucide-react';
+import { ReactNode, useEffect, useMemo, useState } from 'react';
+import { Send, Inbox, Bell } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { LogOut, Users, FileText, Calendar, Settings, BarChart3, CalendarRange } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useNewTicketsIndicator } from '../../hooks/useNewTicketsIndicator';
 
-interface SoignantLayoutProps {
+interface LayoutProps {
   children: ReactNode;
   currentView: string;
   onNavigate: (view: string) => void;
-  clinicName?: string;
-  showCharter?: boolean;
-  onAcceptCharter?: () => void;
-  onRefuseCharter?: () => void;
 }
 
-export default function SoignantLayout({
-  children,
-  currentView,
-  onNavigate,
-  clinicName,
-  showCharter = false,
-  onAcceptCharter,
-  onRefuseCharter,
-}: SoignantLayoutProps) {
+export default function Layout({ children, currentView, onNavigate }: LayoutProps) {
   const { userBase, signOut } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
 
   const isAdmin = userBase?.type_utilisateur === 'admin';
   const clientId = userBase?.client_id ?? null;
 
+  // true  -> il existe au moins un assistant pour ce client
+  // false -> aucun assistant trouvé
+  // null  -> inconnu (chargement)
   const [hasAssistants, setHasAssistants] = useState<boolean | null>(null);
-  const { count: newTicketsCount, markAsSeen } = useNewTicketsIndicator(clientId, isAdmin);
+
+  // --- Compteur de nouveaux tickets pour l'admin (du jour) ---
+  const { count: newTicketsCount, markAsSeen, refresh } = useNewTicketsIndicator(clientId, isAdmin);
   const showTicketsUI = isAdmin && hasAssistants === true;
 
   useEffect(() => {
     let cancelled = false;
+
     const checkAssistants = async () => {
       if (!isAdmin || !clientId) {
         setHasAssistants(null);
@@ -66,16 +57,21 @@ export default function SoignantLayout({
         }
       }
     };
+
     checkAssistants();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [isAdmin, clientId]);
 
+  // Si l’admin n’a pas d’assistants et qu’on est sur l’onglet “tickets_admin”, on renvoie vers Analyse
   useEffect(() => {
     if (isAdmin && hasAssistants === false && currentView === 'tickets_admin') {
       onNavigate('analyse');
     }
   }, [isAdmin, hasAssistants, currentView, onNavigate]);
 
+  // Quand on arrive déjà sur la page tickets_admin, purge le badge
   useEffect(() => {
     if (showTicketsUI && currentView === 'tickets_admin') {
       markAsSeen();
@@ -98,6 +94,7 @@ export default function SoignantLayout({
 
   const goTicketsAdmin = async () => {
     if (!showTicketsUI) return;
+    // on purge le compteur puis on navigue
     await markAsSeen();
     onNavigate('tickets_admin');
   };
@@ -108,17 +105,16 @@ export default function SoignantLayout({
       <header className="bg-white shadow-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <h1 className="text-xl font-bold text-teal-600">
-              {clinicName?.trim() || 'TaysirMed'}
-            </h1>
+            <h1 className="text-xl font-bold text-teal-600">Cabinet Ayadi Radhouan</h1>
 
             <div className="flex items-center gap-3">
+              {/* Cloche de notifications (admin + a des assistants) */}
               {showTicketsUI && (
                 <button
                   type="button"
                   onClick={goTicketsAdmin}
                   aria-label="Tickets collaborateurs"
-                  className="relative p-3 sm:p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition active:scale-[0.98]"
+                  className="relative p-3 sm:p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition active:scale-[0.98] touch-manipulation"
                   title="Tickets collaborateurs"
                 >
                   <Bell className="w-6 h-6 sm:w-5 sm:h-5" />
@@ -143,7 +139,7 @@ export default function SoignantLayout({
                 type="button"
                 onClick={handleSignOut}
                 aria-label="Déconnexion"
-                className="p-3 sm:p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition active:scale-[0.98]"
+                className="p-3 sm:p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition active:scale-[0.98] touch-manipulation"
                 title="Déconnexion"
               >
                 <LogOut className="w-6 h-6 sm:w-5 sm:h-5" />
@@ -157,60 +153,75 @@ export default function SoignantLayout({
       <nav className="bg-white border-b border-gray-200 overflow-x-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex space-x-1 py-2">
-            {userBase?.type_utilisateur === 'admin' && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => onNavigate('analyse')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                    currentView === 'analyse' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
-                  }`}
-                  title="Indicateurs & statistiques"
-                >
-                  <BarChart3 className="w-4 h-4" />
-                  Analyse
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => onNavigate('dashboard')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                    currentView === 'dashboard' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  <FileText className="w-4 h-4" />
-                  Tableau de bord
-                </button>
-              </>
+            {/* Analyse (admin) */}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => onNavigate('analyse')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
+                  currentView === 'analyse'
+                    ? 'bg-teal-50 text-teal-700'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+                title="Indicateurs & statistiques"
+              >
+                <BarChart3 className="w-4 h-4" />
+                Analyse
+              </button>
             )}
 
+            {/* Dashboard (admin) */}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => onNavigate('dashboard')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
+                  currentView === 'dashboard'
+                    ? 'bg-teal-50 text-teal-700'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                Tableau de bord
+              </button>
+            )}
+
+            {/* Patients (tous) */}
             <button
               type="button"
               onClick={() => onNavigate('patients')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                currentView === 'patients' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
+                currentView === 'patients'
+                  ? 'bg-teal-50 text-teal-700'
+                  : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
               <Users className="w-4 h-4" />
               Patients
             </button>
 
+            {/* Effectif du jour (tous) */}
             <button
               type="button"
               onClick={() => onNavigate('effectif')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                currentView === 'effectif' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
+                currentView === 'effectif'
+                  ? 'bg-teal-50 text-teal-700'
+                  : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
               <Calendar className="w-4 h-4" />
               Séances du jour
             </button>
 
+            {/* Planning (tous) */}
             <button
               type="button"
               onClick={() => onNavigate('planning')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                currentView === 'planning' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
+                currentView === 'planning'
+                  ? 'bg-teal-50 text-teal-700'
+                  : 'text-gray-600 hover:bg-gray-50'
               }`}
               title="Agenda par heure"
             >
@@ -218,12 +229,15 @@ export default function SoignantLayout({
               Planning
             </button>
 
-            {userBase?.type_utilisateur !== 'admin' && (
+            {/* Tickets collaborateur (assistants) */}
+            {!isAdmin && (
               <button
                 type="button"
                 onClick={() => onNavigate('tickets_collab')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'tickets_collab' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
+                  currentView === 'tickets_collab'
+                    ? 'bg-teal-50 text-teal-700'
+                    : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
                 <Send className="w-4 h-4" />
@@ -231,16 +245,21 @@ export default function SoignantLayout({
               </button>
             )}
 
+            {/* Tickets collaborateurs (admin) — visible uniquement s’il y a des assistants) */}
             {showTicketsUI && (
               <button
                 type="button"
                 onClick={goTicketsAdmin}
                 className={`relative flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'tickets_admin' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
+                  currentView === 'tickets_admin'
+                    ? 'bg-teal-50 text-teal-700'
+                    : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
                 <Inbox className="w-4 h-4" />
                 <span>Tickets staff</span>
+
+                {/* Badge mini dans l’onglet */}
                 {newTicketsCount > 0 && (
                   <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px]">
                     {newTicketsCount > 99 ? '99+' : newTicketsCount}
@@ -249,12 +268,15 @@ export default function SoignantLayout({
               </button>
             )}
 
-            {userBase?.type_utilisateur === 'admin' && (
+            {/* Paramètres (admin) */}
+            {isAdmin && (
               <button
                 type="button"
                 onClick={() => onNavigate('settings')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'settings' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
+                  currentView === 'settings'
+                    ? 'bg-teal-50 text-teal-700'
+                    : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
                 <Settings className="w-4 h-4" />
@@ -265,52 +287,9 @@ export default function SoignantLayout({
         </div>
       </nav>
 
-      {/* Contenu */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {children}
       </main>
-
-      {/* Modal Charte (optionnel) */}
-      {showCharter && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white w-full max-w-2xl rounded-xl shadow-xl border">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="text-lg font-semibold">Charte d’utilisation</h3>
-              <button
-                type="button"
-                onClick={onRefuseCharter}
-                className="p-2 rounded hover:bg-gray-100"
-                aria-label="Fermer"
-                title="Fermer"
-              >
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
-            </div>
-
-            <div className="p-4 space-y-4">
-              {/* Texte à compléter plus tard */}
-              <div className="prose prose-sm max-w-none text-gray-700" />
-            </div>
-
-            <div className="flex items-center justify-end gap-3 p-4 border-t">
-              <button
-                type="button"
-                onClick={onRefuseCharter}
-                className="px-4 py-2 rounded-lg border hover:bg-gray-50"
-              >
-                Refuser
-              </button>
-              <button
-                type="button"
-                onClick={onAcceptCharter}
-                className="px-4 py-2 rounded-lg bg-teal-600 text-white hover:bg-teal-700"
-              >
-                J’accepte
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
