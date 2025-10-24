@@ -176,8 +176,7 @@ export default function Settings() {
         {isAdmin && (
           <div className="mb-8">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-teal-600" /> Inviter un
-              collaborateur
+              <UserPlus className="w-5 h-5 text-teal-600" /> Ajouter un membre de l'équipe
             </h3>
 
             <div className="flex flex-col sm:flex-row gap-3 items-start">
