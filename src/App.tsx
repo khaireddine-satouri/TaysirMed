@@ -1,10 +1,12 @@
 // src/App.tsx
 import { useEffect, useRef, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+
+// Auth
 import Login from './components/Login';
 import Signup from './components/Signup';
 
-// ===== Soignant (V1 inchangé) =====
+// ===== Soignant (V1 inchangé, chemins mis à jour) =====
 import SoignantLayout from './components/layouts/SoignantLayout';
 import PatientsList from './components/soignant/PatientsList';
 import PatientDetail from './components/soignant/PatientDetail';
@@ -45,11 +47,11 @@ function SpinnerFull() {
 }
 
 function AppContent() {
-  const { user, userBase, loading } = useAuth();
+  const { user, userBase, loading, lastBusinessError } = useAuth();
 
   // type_client du client courant
   const [clientType, setClientType] = useState<ClientType | null>(null);
-  const [clientLoading, setClientLoading] = useState(true);
+  const [clientLoading, setClientLoading] = useState<boolean>(false);
 
   const isAdmin = userBase?.type_utilisateur === 'admin';
   const isAssistant = userBase?.type_utilisateur === 'assistant';
@@ -70,12 +72,31 @@ function AppContent() {
 
   // Charger type_client à partir de clients(client_id)
   useEffect(() => {
+    // Si l’auth est encore en cours, on ne fait rien
+    if (loading) return;
+
+    // Si pas d’utilisateur connecté => pas de chargement client
+    if (!user) {
+      setClientType(null);
+      setClientLoading(false);
+      return;
+    }
+
+    // Si on a l'utilisateur mais pas encore son profil users_base, on attend
+    if (!userBase) {
+      setClientType(null);
+      setClientLoading(false);
+      return;
+    }
+
+    // Si l’utilisateur n’a pas (encore) de client_id, inutile de charger
+    if (!userBase.client_id) {
+      setClientType(null);
+      setClientLoading(false);
+      return;
+    }
+
     const loadClientType = async () => {
-      if (!userBase?.client_id) {
-        setClientType(null);
-        setClientLoading(false);
-        return;
-      }
       setClientLoading(true);
       const { data, error } = await supabase
         .from('clients')
@@ -92,13 +113,14 @@ function AppContent() {
       setClientLoading(false);
     };
 
-    if (userBase) loadClientType();
-  }, [userBase]);
+    loadClientType();
+  }, [loading, user, userBase]);
 
   // Vue de départ dépendant du rôle et du type_client
   useEffect(() => {
     if (loading || clientLoading) return;
-    if (!user || !userBase || !clientType) return;
+    if (!user || !userBase) return; // non connecté => pas de vue
+    if (!clientType) return; // pas de clientType => pas de vue (ou page médecin à terme)
 
     if (!hasInitializedDefaultView.current) {
       let startView: View = 'patients';
@@ -119,25 +141,74 @@ function AppContent() {
   if (loading) return <SpinnerFull />;
 
   if (!user || !userBase) {
+    // En cas de déconnexion, on autorise une réinitialisation à la prochaine connexion
     hasInitializedDefaultView.current = false;
 
+    // route simple sans react-router
     if (pathname === '/signup') {
       return <Signup />;
     }
+    return <Login onGoSignup={() => (window.location.href = '/signup')} />;
+  }
 
+  // Ici, on a user + userBase.
+  // Si client en cours de chargement → spinner
+  if (clientLoading) return <SpinnerFull />;
+
+  // Si on a un "business error" (ex: client inactif), on force vers Login
+  if (lastBusinessError === 'INACTIVE_CLIENT') {
     return (
-      <Login
-        onGoSignup={() => {
-          // navigation simple sans router
-          if (typeof window !== 'undefined') {
-            window.location.href = '/signup';
-          }
-        }}
-      />
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white p-6 rounded-xl shadow-sm max-w-md w-full text-center border">
+          <p className="text-red-600 font-medium">
+            Votre compte est désactivé. Veuillez contacter l’administrateur.
+          </p>
+          <a
+            href="/"
+            className="inline-block mt-4 px-4 py-2 rounded-lg bg-teal-600 text-white hover:bg-teal-700"
+          >
+            Retour
+          </a>
+        </div>
+      </div>
     );
   }
 
-  if (clientLoading || !clientType) return <SpinnerFull />;
+  // Si pas de clientType (compte sans client rattaché – cas anormal si ton bootstrap est bien câblé)
+  if (!clientType) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white p-6 rounded-xl shadow-sm max-w-md w-full text-center border">
+          <p className="text-gray-700">
+            Votre profil est chargé mais aucun espace client n’est encore rattaché.
+          </p>
+          <p className="text-sm text-gray-500 mt-2">
+            Si vous venez de créer votre compte, patientez quelques secondes et rechargez la page.
+          </p>
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 rounded-lg bg-teal-600 text-white hover:bg-teal-700"
+            >
+              Recharger
+            </button>
+            <a
+              href="/logout"
+              onClick={(e) => {
+                e.preventDefault();
+                // pas de contexte ici → simple redirection
+                // l’AuthContext écoutera onAuthStateChange
+                supabase.auth.signOut().finally(() => window.location.replace('/'));
+              }}
+              className="px-4 py-2 rounded-lg border hover:bg-gray-50"
+            >
+              Se déconnecter
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // ===== Navigation commune =====
   const handleNavigate = (view: string) => {
@@ -316,10 +387,10 @@ function AppContent() {
 
   // ===== Rendu Médecin =====
   const renderMedecin = () => {
-    // Vue par défaut : ‘rdv’
     return (
       <MedecinLayout>
-        {currentView === 'rdv' ? <RendezVousList /> : <RendezVousList />}
+        {/* Pour l’instant, on n’a que la page des RDV */}
+        <RendezVousList />
       </MedecinLayout>
     );
   };
