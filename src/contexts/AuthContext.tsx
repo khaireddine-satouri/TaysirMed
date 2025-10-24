@@ -7,7 +7,7 @@ interface AuthContextType {
   user: User | null;
   userBase: UserBase | null;
   loading: boolean;
-  lastBusinessError: string | null; // <-- pour différencier erreurs métier
+  lastBusinessError: string | null; // ex: 'INACTIVE_CLIENT'
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -48,34 +48,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLastBusinessError(null);
     try {
       // 1) Lire users_base
-      let { data: ub, error: ubErr } = await supabase
+      const { data: ub, error: ubErr } = await supabase
         .from('users_base')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
 
-      // 2) Si absent (latence du trigger ou 1er passage), tenter le bootstrap
-      if ((!ub || ubErr) && userId) {
-        await supabase.rpc('ensure_bootstrap_for_user', {
-          p_user_id: userId,
-          p_nom: '',
-          p_prenom: '',
-          p_type_client: null
-        }).catch(() => { /* ignore: idempotent */ });
-
-        const retry = await supabase
-          .from('users_base')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle();
-        ub = retry.data ?? null;
-        ubErr = retry.error ?? null;
-      }
-
       if (ubErr) throw ubErr;
-      setUserBase(ub);
+      setUserBase(ub ?? null);
 
-      // 3) Vérifier le client actif (si on a un client_id)
+      // 2) Vérifier le client actif (si on a un client_id)
       if (ub?.client_id) {
         const { data: cli, error: cliErr } = await supabase
           .from('clients')
@@ -91,22 +73,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch (error) {
-      // Erreurs ici ≠ mauvais mot de passe
       console.error('Erreur chargement profil utilisateur:', error);
-      // on garde user sessionné mais sans profil; l’app peut proposer de réessayer
+      // On n'écrase pas user ici ; l’app pourra afficher un message ou proposer un refresh.
     } finally {
       setLoading(false);
     }
   };
 
   const signIn = async (email: string, password: string) => {
-    // IMPORTANT: on ne fait que l’auth ici. Pas de logique métier → pas d’erreur sur les cred valides
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      // Ces erreurs-là sont réellement “identifiants invalides”
-      throw error;
-    }
-    // le onAuthStateChange se chargera de charger users_base / client / etc.
+    if (error) throw error;
+    // onAuthStateChange se chargera de charger users_base / clients / etc.
   };
 
   const signOut = async () => {
