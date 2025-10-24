@@ -24,7 +24,7 @@ import RendezVousList from './components/medecin/RendezVousList';
 import { supabase, Patient, DossierSoin } from './lib/supabase';
 
 const LOAD_TIMEOUT_MS = 12_000;   // après 12s: déconnexion + redirection login
-const WARNING_AFTER_MS = 6_000;   // après 6s: affiche un avertissement
+const WARNING_AFTER_MS = 6_000;   // après 6s: petit bandeau d’avertissement
 
 type View =
   | 'dashboard'
@@ -47,6 +47,7 @@ function SpinnerFull() {
   );
 }
 
+/** Carte anti-blocage quand user connecté mais client_id pas encore prêt */
 function BootstrapGate({
   onRetry,
   onLogout,
@@ -89,50 +90,39 @@ function BootstrapGate({
 function AppContent() {
   const { user, userBase, loading, signOut } = useAuth();
 
+  // Type du client (soignant | medecin)
   const [clientType, setClientType] = useState<ClientType | null>(null);
   const [clientLoading, setClientLoading] = useState(true);
-  const [gateBusy, setGateBusy] = useState(false);
-  const [tookTooLong, setTookTooLong] = useState(false);
 
+  // Gate “busy” (quand client_id manque)
+  const [gateBusy, setGateBusy] = useState(false);
+
+  // Watchdog (avertissement + auto redirect)
+  const [tookTooLong, setTookTooLong] = useState(false);
   const timeoutRef = useRef<number | null>(null);
   const warnRef = useRef<number | null>(null);
 
   const isAdmin = userBase?.type_utilisateur === 'admin';
   const isAssistant = userBase?.type_utilisateur === 'assistant';
 
+  // navigation
   const [currentView, setCurrentView] = useState<View>('patients');
+
+  // états V1 (soignant)
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [selectedDossier, setSelectedDossier] = useState<DossierSoin | null>(null);
   const [dashOverrideFilters, setDashOverrideFilters] =
     useState<DashboardFilters | null>(null);
 
   const hasInitializedDefaultView = useRef(false);
+
+  // routing minimaliste (sans react-router)
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
 
-  // Helper: déconnexion + redirection vers login (avec cache-buster)
-  const doLogoutAndGoLogin = async () => {
-    try {
-      await supabase.auth.signOut();
-    } catch {
-      /* noop */
-    } finally {
-      if (typeof window !== 'undefined') {
-        window.location.replace(`/login?ts=${Date.now()}`);
-      }
-    }
-  };
-
-  // Si on visite /login avec une session encore active, on force la déconnexion
-  useEffect(() => {
-    if (pathname === '/login' && user) {
-      doLogoutAndGoLogin();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname, user]);
-
-  // Watchdog: si “loading” (auth) ou “clientLoading” dure trop, avertissement puis logout + retour login
+  // ===== Watchdog: si “loading” (auth) OU “clientLoading” dure trop, on force retour login
   useEffect(() => {
     const skip = pathname === '/signup';
+
     const clearTimers = () => {
       if (timeoutRef.current) {
         window.clearTimeout(timeoutRef.current);
@@ -151,18 +141,25 @@ function AppContent() {
         WARNING_AFTER_MS
       ) as unknown as number;
 
-      timeoutRef.current = window.setTimeout(() => {
-        doLogoutAndGoLogin();
+      timeoutRef.current = window.setTimeout(async () => {
+        try {
+          await signOut();
+        } catch {
+          // noop
+        } finally {
+          if (typeof window !== 'undefined') {
+            window.location.replace('/login');
+          }
+        }
       }, LOAD_TIMEOUT_MS) as unknown as number;
     } else {
       clearTimers();
     }
 
     return clearTimers;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, clientLoading, pathname]);
+  }, [loading, clientLoading, pathname, signOut]);
 
-  // Charger type_client à partir de clients(client_id)
+  // Charger type_client depuis la table clients
   useEffect(() => {
     const loadClientType = async () => {
       if (!userBase?.client_id) {
@@ -189,7 +186,7 @@ function AppContent() {
     if (userBase) loadClientType();
   }, [userBase]);
 
-  // Vue de départ dépendant du rôle et du type_client
+  // Vue de départ (en fonction rôle & type_client)
   useEffect(() => {
     if (loading || clientLoading) return;
     if (!user || !userBase || !clientType) return;
@@ -199,6 +196,7 @@ function AppContent() {
       if (clientType === 'soignant') {
         if (isAdmin) startView = 'analyse';
         else if (isAssistant) startView = 'effectif';
+        else startView = 'patients';
       } else {
         startView = 'rdv';
       }
@@ -214,8 +212,11 @@ function AppContent() {
         <SpinnerFull />
         {tookTooLong && (
           <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2 rounded-lg shadow">
-            La connexion prend plus de temps que prévu…
-            <button onClick={doLogoutAndGoLogin} className="underline ml-1">
+            La connexion prend plus de temps que prévu…{' '}
+            <button
+              onClick={() => (typeof window !== 'undefined' ? window.location.replace('/login') : null)}
+              className="underline ml-1"
+            >
               revenir au login
             </button>
           </div>
@@ -240,16 +241,13 @@ function AppContent() {
     );
   }
 
-  // ===== Gate: user connecté mais pas de client_id
+  // ===== User connecté mais pas de client_id -> Gate (pas de hooks conditionnels : state défini plus haut)
   if (!userBase.client_id) {
     const retry = async () => {
       if (gateBusy) return;
       setGateBusy(true);
       try {
-        // Ici tu peux appeler une RPC idempotente si tu en as une (ensure_bootstrap_for_user)
-        // await supabase.rpc('ensure_bootstrap_for_user', { p_user_id: user.id });
-
-        // Reload doux de users_base
+        // Stratégie simple: on re-tente un refresh “doux” (au besoin, appeler une RPC idempotente)
         const { data: ub } = await supabase
           .from('users_base')
           .select('*')
@@ -258,8 +256,9 @@ function AppContent() {
 
         if (ub?.client_id && typeof window !== 'undefined') {
           window.location.reload();
-        } else if (typeof window !== 'undefined') {
-          window.location.reload();
+        } else {
+          // fallback: simple reload
+          if (typeof window !== 'undefined') window.location.reload();
         }
       } catch (e) {
         console.error('Retry bootstrap error:', e);
@@ -268,16 +267,15 @@ function AppContent() {
       }
     };
 
-    return (
-      <BootstrapGate
-        loading={gateBusy}
-        onRetry={retry}
-        onLogout={doLogoutAndGoLogin}
-      />
-    );
+    const logout = () =>
+      signOut().finally(() => {
+        if (typeof window !== 'undefined') window.location.replace('/login');
+      });
+
+    return <BootstrapGate loading={gateBusy} onRetry={retry} onLogout={logout} />;
   }
 
-  // ===== Client connu mais type non encore chargé
+  // ===== Client connu mais type non encore chargé : petit spinner + avertissement possible
   if (clientLoading) {
     return (
       <div className="relative">
@@ -285,7 +283,16 @@ function AppContent() {
         {tookTooLong && (
           <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2 rounded-lg shadow">
             Initialisation de l’espace en cours…
-            <button onClick={doLogoutAndGoLogin} className="underline ml-1">
+            <button
+              onClick={async () => {
+                try {
+                  await signOut();
+                } finally {
+                  if (typeof window !== 'undefined') window.location.replace('/login');
+                }
+              }}
+              className="underline ml-1"
+            >
               revenir au login
             </button>
           </div>
@@ -359,7 +366,7 @@ function AppContent() {
     setCurrentView('dashboard');
   };
 
-  // ===== Rendu Soignant =====
+  // ===== Rendu Soignant (V1 inchangé) =====
   const renderSoignant = () => {
     const isAdminLocal = userBase?.type_utilisateur === 'admin';
 
@@ -482,7 +489,7 @@ function AppContent() {
   if (clientType === 'soignant') return renderSoignant();
   if (clientType === 'medecin') return renderMedecin();
 
-  // Cas edge
+  // Sécurité: cas edge
   return <SpinnerFull />;
 }
 
