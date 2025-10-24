@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { Stethoscope, Mail, Phone } from "lucide-react";
-import { Link } from "react-router-dom";
 
-export default function Login() {
+export default function Login({ onSwitchToSignup }: { onSwitchToSignup: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -14,11 +13,14 @@ export default function Login() {
     e.preventDefault();
     setError("");
     setLoading(true);
+
     try {
       await signIn(email, password);
     } catch (err: any) {
-      if (err?.message === "INACTIVE_CLIENT" || err?.code === "INACTIVE_CLIENT") {
-        setError("Votre compte est desactive. Veuillez contacter l'administrateur de la plateforme.");
+      if (err.message === "INACTIVE_CLIENT") {
+        setError(
+          "Votre compte est désactivé. Veuillez contacter l'administrateur de la plateforme."
+        );
       } else {
         setError("Email ou mot de passe incorrect");
       }
@@ -37,7 +39,7 @@ export default function Login() {
               <Stethoscope className="w-8 h-8 text-teal-600" />
             </div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">TaysirMed</h1>
-            <p className="text-gray-600">Connexion a votre espace</p>
+            <p className="text-gray-600">Connexion à votre espace</p>
           </div>
 
           {/* Form */}
@@ -53,7 +55,7 @@ export default function Login() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
-                placeholder="vous@email.com"
+                placeholder="votre@email.com"
               />
             </div>
 
@@ -87,27 +89,26 @@ export default function Login() {
             </button>
           </form>
 
-          {/* Signup link */}
-          <div className="text-center text-sm">
-            <span className="text-gray-600">Nouveau ? </span>
-            <Link to="/signup" className="text-teal-700 hover:underline">
-              Creer un compte
-            </Link>
-          </div>
+          {/* Lien Signup */}
+          <p className="text-center text-sm mt-4">
+            Pas encore de compte ?{" "}
+            <button onClick={onSwitchToSignup} className="text-teal-600 hover:underline">
+              Créer un compte
+            </button>
+          </p>
 
           {/* Contact info */}
           <div className="space-y-4">
             <p className="text-center text-xs text-gray-400">
-              Ce site est a usage personnel. Pour toute demande d’information, contactez-nous :
+              Ce site est à usage personnel. Pour toute demande d’information, veuillez nous
+              contacter :
             </p>
-
             <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
               <Mail className="w-4 h-4 text-teal-600" />
               <a href="mailto:contact@taysirmed.tn" className="hover:underline">
                 contact@taysirmed.tn
               </a>
             </div>
-
             <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
               <Phone className="w-4 h-4 text-teal-600" />
               <a href="tel:+21622233366" className="hover:underline">
