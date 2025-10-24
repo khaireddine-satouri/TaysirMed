@@ -1,5 +1,6 @@
+// src/components/soignant/AdminAnalytics.tsx
 import { useEffect, useMemo, useState } from 'react';
-import { supabase, Seance, UserBase } from '../../lib/supabase';
+import { supabase, type Seance, type UserBase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   BarChart3,
@@ -38,7 +39,7 @@ type KPIsPeriod = {
 };
 
 /** Filtres de dashboard envoyés lors d’un clic sur une tuile */
-type DashFilters = {
+export type DashFilters = {
   etat: 'all' | 'a_venir' | 'en_cours' | 'termine';
   pec: 'all' | 'oui' | 'non';
   etatPec: 'all' | 'en_cours' | 'depose';
@@ -65,7 +66,10 @@ export default function AdminAnalytics({
   useEffect(() => {
     let cancelled = false;
     const checkAssistants = async () => {
-      if (!isAdmin || !clientId) { setHasAssistants(null); return; }
+      if (!isAdmin || !clientId) {
+        setHasAssistants(null);
+        return;
+      }
       try {
         const { data, error } = await supabase
           .from('users_base')
@@ -73,8 +77,13 @@ export default function AdminAnalytics({
           .eq('client_id', clientId)
           .eq('type_utilisateur', 'assistant')
           .limit(1);
+
         if (cancelled) return;
-        if (error) { console.error('Erreur vérification assistants:', error); setHasAssistants(false); return; }
+        if (error) {
+          console.error('Erreur vérification assistants:', error);
+          setHasAssistants(false);
+          return;
+        }
         setHasAssistants((data?.length ?? 0) > 0);
       } catch (e) {
         if (!cancelled) {
@@ -84,7 +93,9 @@ export default function AdminAnalytics({
       }
     };
     checkAssistants();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [isAdmin, clientId]);
 
   /* ---------------- Utils dates (Tunis) ---------------- */
@@ -98,24 +109,26 @@ export default function AdminAnalytics({
       month: '2-digit',
       day: '2-digit',
     }).formatToParts(new Date());
-    const y = Number(parts.find(p => p.type === 'year')?.value);
-    const m = Number(parts.find(p => p.type === 'month')?.value);
-    const d = Number(parts.find(p => p.type === 'day')?.value);
+    const y = Number(parts.find((p) => p.type === 'year')?.value);
+    const m = Number(parts.find((p) => p.type === 'month')?.value);
+    const d = Number(parts.find((p) => p.type === 'day')?.value);
     return { y, m0: m - 1, d };
   };
 
   /** Construit YYYY-MM-DD (sans conversions de fuseau) */
-  const isoFromYMD = (y: number, m0: number, d: number) => `${y}-${pad2(m0 + 1)}-${pad2(d)}`;
+  const isoFromYMD = (y: number, m0: number, d: number) =>
+    `${y}-${pad2(m0 + 1)}-${pad2(d)}`;
 
   /** Dernier jour (nombre) d’un mois donné (indépendant du fuseau) */
-  const lastDayNum = (y: number, m0: number) => new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate();
+  const lastDayNum = (y: number, m0: number) =>
+    new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate();
 
   const formatDateFR = (iso: string) => {
     const [y, m, d] = iso.split('-');
     return `${d}/${m}/${y}`;
   };
 
-  /** Période par défaut en heure de Tunis */
+  /** Période par défaut (heure Tunis) */
   const computeDefaultRange = (): Range => {
     const { y, m0, d } = getTunisYMDNow();
     if (d === 1) {
@@ -147,7 +160,20 @@ export default function AdminAnalytics({
 
   const todayYM = todayTunisISO.slice(0, 7);
   const [ySel, mSel] = month.split('-').map(Number);
-  const monthsLabels = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
+  const monthsLabels = [
+    'Jan',
+    'Fév',
+    'Mar',
+    'Avr',
+    'Mai',
+    'Juin',
+    'Juil',
+    'Août',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Déc',
+  ];
 
   const setYear = (newY: number) => {
     const candidate = `${newY}-${pad2(mSel)}`;
@@ -180,23 +206,209 @@ export default function AdminAnalytics({
     if (mode === 'range') return range;
     const start = isoFromYMD(ySel, mSel - 1, 1);
     const last = lastDayNum(ySel, mSel - 1);
-    // On borne la fin au "today Tunis" si le mois sélectionné est le mois courant
     const endFull = isoFromYMD(ySel, mSel - 1, last);
     const end =
       `${ySel}-${pad2(mSel)}` === todayYM
-        ? (endFull > todayTunisISO ? todayTunisISO : endFull)
+        ? endFull > todayTunisISO
+          ? todayTunisISO
+          : endFull
         : endFull;
     return { start, end };
   }, [mode, range, ySel, mSel, todayYM, todayTunisISO]);
 
+  /* ======== Chargement instantané ======== */
   useEffect(() => {
-    if (!clientId || !isAdmin) return;
-    loadNowKPIs();
+    if (!clientId || !isAdmin) {
+      // reset safe
+      setNowKPIs({
+        a_venir: 0,
+        en_cours: 0,
+        en_cours_inactifs: 0,
+        en_cours_debiteurs: 0,
+      });
+      setLoadingNow(false);
+      return;
+    }
+    const load = async () => {
+      setLoadingNow(true);
+      try {
+        const { data, error } = await supabase
+          .from('dossiers_soins')
+          .select('id, etat, est_actif, est_paye')
+          .eq('client_id', clientId);
+        if (error) throw error;
+
+        const a_venir = data?.filter((d) => d.etat === 'a_venir').length || 0;
+        const en_cours = data?.filter((d) => d.etat === 'en_cours').length || 0;
+        const en_cours_inactifs =
+          data?.filter((d) => d.etat === 'en_cours' && d.est_actif === false)
+            .length || 0;
+        const en_cours_debiteurs =
+          data?.filter((d) => d.etat === 'en_cours' && d.est_paye === false)
+            .length || 0;
+
+        setNowKPIs({
+          a_venir,
+          en_cours,
+          en_cours_inactifs,
+          en_cours_debiteurs,
+        });
+      } catch (e) {
+        console.error('Erreur KPIs instant T:', e);
+        setNowKPIs({
+          a_venir: 0,
+          en_cours: 0,
+          en_cours_inactifs: 0,
+          en_cours_debiteurs: 0,
+        });
+      } finally {
+        setLoadingNow(false);
+      }
+    };
+    load();
   }, [clientId, isAdmin]);
 
+  /* ======== Chargement période ======== */
   useEffect(() => {
-    if (!clientId || !isAdmin) return;
-    loadPeriodKPIs();
+    if (!clientId || !isAdmin) {
+      setPeriodKPIs({
+        totalEncaissements: 0,
+        dossiersOuverts: 0,
+        dossiersClotures: 0,
+        seancesRealisees: 0,
+        patientsDistincts: 0,
+        parPrestataire: [],
+      });
+      setLoadingPeriod(false);
+      return;
+    }
+
+    const load = async () => {
+      setLoadingPeriod(true);
+      try {
+        // Dossiers du client uniquement
+        const { data: dossiers, error: dErr } = await supabase
+          .from('dossiers_soins')
+          .select('id, patient_id, created_at, date_fin, etat')
+          .eq('client_id', clientId);
+        if (dErr) throw dErr;
+
+        const dossierIds = (dossiers || []).map((d) => d.id);
+
+        // Séances RÉALISÉES dans la période pour ces dossiers
+        let seances: Seance[] = [];
+        if (dossierIds.length > 0) {
+          const { data: _seances, error: sErr } = await supabase
+            .from('seances')
+            .select('id, dossier_id, prestataire_id, montant_paye, date_seance, etat_seance')
+            .in('dossier_id', dossierIds)
+            .in('etat_seance', ['realisee', 'réalisée']) // garde les 2 variantes si tes données sont mixtes
+            .gte('date_seance', effectiveRange.start)
+            .lte('date_seance', effectiveRange.end);
+          if (sErr) throw sErr;
+          seances = _seances || [];
+        }
+
+        const totalEncaissements = seances.reduce(
+          (sum, s) => sum + (Number(s.montant_paye) || 0),
+          0
+        );
+        const seancesRealisees = seances.length;
+
+        // Par prestataire
+        const countsByPrestataire: Record<string, number> = {};
+        const sumsByPrestataire: Record<string, number> = {};
+        for (const s of seances) {
+          const k = s.prestataire_id || 'unknown';
+          countsByPrestataire[k] = (countsByPrestataire[k] || 0) + 1;
+          sumsByPrestataire[k] =
+            (sumsByPrestataire[k] || 0) + (Number(s.montant_paye) || 0);
+        }
+        const prestataireIds = Object.keys(countsByPrestataire).filter(
+          (id) => id !== 'unknown'
+        );
+
+        let mapUsers = new Map<
+          string,
+          Pick<UserBase, 'id' | 'nom' | 'prenom'>
+        >();
+        if (prestataireIds.length > 0) {
+          const { data: users, error: uErr } = await supabase
+            .from('users_base')
+            .select('id, nom, prenom')
+            .in('id', prestataireIds);
+          if (uErr) throw uErr;
+          mapUsers = new Map((users || []).map((u) => [u.id, u]));
+        }
+
+        const parPrestataire: KPIsPeriod['parPrestataire'] = Object.entries(
+          countsByPrestataire
+        ).map(([id, totalSeances]) => {
+          const u = mapUsers.get(id);
+          const encaissement = sumsByPrestataire[id] || 0;
+          return {
+            prestataire_id: id,
+            nom: u?.nom || '',
+            prenom: u?.prenom || '',
+            totalSeances,
+            encaissement,
+          };
+        });
+
+        // Dossiers ouverts/clos (bornés par période)
+        const openedInPeriod =
+          dossiers?.filter(
+            (d) =>
+              d.created_at &&
+              d.created_at >= effectiveRange.start &&
+              d.created_at <= `${effectiveRange.end}T23:59:59.999Z`
+          ).length || 0;
+
+        const closedInPeriod =
+          dossiers?.filter(
+            (d) =>
+              d.etat === 'termine' &&
+              d.date_fin &&
+              d.date_fin >= effectiveRange.start &&
+              d.date_fin <= effectiveRange.end
+          ).length || 0;
+
+        // Nouveaux patients (distincts) de dossiers ouverts dans la période
+        const patientIds = new Set<string>();
+        for (const d of dossiers || []) {
+          if (
+            d.created_at &&
+            d.created_at >= effectiveRange.start &&
+            d.created_at <= `${effectiveRange.end}T23:59:59.999Z` &&
+            d.patient_id
+          ) {
+            patientIds.add(d.patient_id);
+          }
+        }
+
+        setPeriodKPIs({
+          totalEncaissements,
+          dossiersOuverts: openedInPeriod,
+          dossiersClotures: closedInPeriod,
+          seancesRealisees,
+          patientsDistincts: patientIds.size,
+          parPrestataire,
+        });
+      } catch (e) {
+        console.error('Erreur KPIs période:', e);
+        setPeriodKPIs({
+          totalEncaissements: 0,
+          dossiersOuverts: 0,
+          dossiersClotures: 0,
+          seancesRealisees: 0,
+          patientsDistincts: 0,
+          parPrestataire: [],
+        });
+      } finally {
+        setLoadingPeriod(false);
+      }
+    };
+    load();
   }, [clientId, isAdmin, effectiveRange.start, effectiveRange.end]);
 
   /* ---------------- Utils ---------------- */
@@ -209,145 +421,6 @@ export default function AdminAnalytics({
       hour: '2-digit',
       minute: '2-digit',
     }).format(new Date());
-
-  /* --------------- Chargement instantané --------------- */
-  const loadNowKPIs = async () => {
-    setLoadingNow(true);
-    try {
-      const { data: all, error } = await supabase
-        .from('dossiers_soins')
-        .select('id, etat, est_actif, est_paye')
-        .eq('client_id', clientId);
-      if (error) throw error;
-
-      const a_venir = all?.filter((d) => d.etat === 'a_venir').length || 0;
-      const en_cours = all?.filter((d) => d.etat === 'en_cours').length || 0;
-      const en_cours_inactifs = all?.filter((d) => d.etat === 'en_cours' && d.est_actif === false).length || 0;
-      const en_cours_debiteurs = all?.filter((d) => d.etat === 'en_cours' && d.est_paye === false).length || 0;
-
-      setNowKPIs({ a_venir, en_cours, en_cours_inactifs, en_cours_debiteurs });
-    } catch (e) {
-      console.error('Erreur KPIs instant T:', e);
-      setNowKPIs({ a_venir: 0, en_cours: 0, en_cours_inactifs: 0, en_cours_debiteurs: 0 });
-    } finally {
-      setLoadingNow(false);
-    }
-  };
-
-  /* --------------- Chargement période --------------- */
-  const loadPeriodKPIs = async () => {
-    setLoadingPeriod(true);
-    try {
-      const { data: dossiers, error: dErr } = await supabase
-        .from('dossiers_soins')
-        .select('id, patient_id, created_at, date_fin, etat');
-      if (dErr) throw dErr;
-
-      const dossierIds = (dossiers || []).map((d) => d.id);
-
-      // IMPORTANT: ne prendre QUE les séances RÉALISÉES dans la période
-      let seances: Seance[] = [];
-      if (dossierIds.length > 0) {
-        const { data: _seances, error: sErr } = await supabase
-          .from('seances')
-          .select('id, dossier_id, prestataire_id, montant_paye, date_seance, etat_seance')
-          .in('dossier_id', dossierIds)
-          .in('etat_seance', ['réalisée', 'realisee'])
-          .gte('date_seance', effectiveRange.start)
-          .lte('date_seance', effectiveRange.end);
-        if (sErr) throw sErr;
-        seances = _seances || [];
-      }
-
-      // Total encaissements = somme des montants payés des séances réalisées
-      const totalEncaissements = seances.reduce((sum, s) => sum + (Number(s.montant_paye) || 0), 0);
-
-      // Séances réalisées = nombre de séances réalisées
-      const seancesRealisees = seances.length;
-
-      // Agrégations par prestataire (compte + encaissement)
-      const countsByPrestataire: Record<string, number> = {};
-      const sumsByPrestataire: Record<string, number> = {};
-      for (const s of seances) {
-        const k = s.prestataire_id || 'unknown';
-        countsByPrestataire[k] = (countsByPrestataire[k] || 0) + 1;
-        sumsByPrestataire[k] = (sumsByPrestataire[k] || 0) + (Number(s.montant_paye) || 0);
-      }
-      const prestataireIds = Object.keys(countsByPrestataire).filter((id) => id !== 'unknown');
-      let mapUsers = new Map<string, Pick<UserBase, 'id' | 'nom' | 'prenom'>>();
-      if (prestataireIds.length > 0) {
-        const { data: users, error: uErr } = await supabase
-          .from('users_base')
-          .select('id, nom, prenom')
-          .in('id', prestataireIds);
-        if (uErr) throw uErr;
-        mapUsers = new Map((users || []).map((u) => [u.id, u]));
-      }
-      const parPrestataire: KPIsPeriod['parPrestataire'] = Object.entries(countsByPrestataire).map(
-        ([id, totalSeances]) => {
-          const u = mapUsers.get(id);
-          const encaissement = sumsByPrestataire[id] || 0;
-          return {
-            prestataire_id: id,
-            nom: u?.nom || '',
-            prenom: u?.prenom || '',
-            totalSeances,
-            encaissement,
-          };
-        }
-      );
-
-      // Dossiers ouverts pendant la période (sur created_at)
-      const dossiersOuverts =
-        dossiers?.filter(
-          (d) =>
-            d.created_at &&
-            d.created_at >= effectiveRange.start &&
-            d.created_at <= `${effectiveRange.end}T23:59:59.999Z`,
-        ).length || 0;
-
-      // Dossiers clôturés pendant la période (etat=termine + date_fin dans la période)
-      const dossiersClotures =
-        dossiers?.filter(
-          (d) => d.etat === 'termine' && d.date_fin && d.date_fin >= effectiveRange.start && d.date_fin <= effectiveRange.end,
-        ).length || 0;
-
-      // Nouveaux patients = patients des dossiers ouverts dans la période
-      const patientIds = new Set<string>();
-      for (const d of dossiers || []) {
-        if (
-          d.created_at &&
-          d.created_at >= effectiveRange.start &&
-          d.created_at <= `${effectiveRange.end}T23:59:59.999Z` &&
-          d.patient_id
-        ) {
-          patientIds.add(d.patient_id);
-        }
-      }
-      const patientsDistincts = patientIds.size;
-
-      setPeriodKPIs({
-        totalEncaissements,
-        dossiersOuverts,
-        dossiersClotures,
-        seancesRealisees,
-        patientsDistincts,
-        parPrestataire,
-      });
-    } catch (e) {
-      console.error('Erreur KPIs période:', e);
-      setPeriodKPIs({
-        totalEncaissements: 0,
-        dossiersOuverts: 0,
-        dossiersClotures: 0,
-        seancesRealisees: 0,
-        patientsDistincts: 0,
-        parPrestataire: [],
-      });
-    } finally {
-      setLoadingPeriod(false);
-    }
-  };
 
   /* ========================== PDF ========================== */
   const formatTunisTitle = (d: Date) =>
@@ -368,175 +441,160 @@ export default function AdminAnalytics({
     }).format(d);
 
   const downloadPDF = () => {
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  const padX = 36;
-  const pageW = doc.internal.pageSize.getWidth();
-  let y = 40;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const padX = 36;
+    const pageW = doc.internal.pageSize.getWidth();
+    let y = 40;
 
-  const formatDateFR = (iso: string) => {
-    const [y, m, d] = iso.split('-');
-    return `${d}/${m}/${y}`;
+    const _formatDateFR = (iso: string) => {
+      const [y, m, d] = iso.split('-');
+      return `${d}/${m}/${y}`;
+    };
+
+    // Titre
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.text('Analyse — Statistiques', padX, y);
+    y += 22;
+
+    // Instantané
+    const tsNow = formatTunisTitle(new Date());
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('Indicateurs instantanés — ' + tsNow, padX, y);
+    y += 10;
+
+    const tilesNow = [
+      { label: 'Dossiers à venir', value: String(nowKPIs.a_venir) },
+      { label: 'Dossiers en cours', value: String(nowKPIs.en_cours) },
+      { label: 'Dossiers en cours inactifs', value: String(nowKPIs.en_cours_inactifs) },
+      { label: 'Dossiers en cours débiteurs', value: String(nowKPIs.en_cours_debiteurs) },
+    ];
+    const cardW = 240, cardH = 64, gap = 14;
+    let x = padX;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    for (const t of tilesNow) {
+      doc.setDrawColor(225);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(x, y, cardW, cardH, 6, 6, 'FD');
+
+      doc.setTextColor(90);
+      doc.text(t.label, x + 12, y + 22);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(16);
+      doc.setTextColor(20, 115, 108);
+      doc.text(t.value, x + 12, y + 46);
+
+      x += cardW + gap;
+      if (x + cardW > pageW - padX) {
+        x = padX;
+        y += cardH + gap;
+      }
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.setTextColor(0);
+    }
+    y += cardH + 12;
+
+    // Période
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text(
+      `Indicateurs sur la période du ${_formatDateFR(effectiveRange.start)} au ${_formatDateFR(effectiveRange.end)}`,
+      padX,
+      y
+    );
+    y += 10;
+
+    const tilesPeriod = [
+      { label: 'Total encaissements (DT)', value: periodKPIs.totalEncaissements.toFixed(2), color: [20,115,108] as [number,number,number] },
+      { label: 'Nouveaux patients', value: String(periodKPIs.patientsDistincts), color: [60,60,60] as [number,number,number] },
+      { label: 'Dossiers ouverts', value: String(periodKPIs.dossiersOuverts), color: [60,60,60] as [number,number,number] },
+      { label: 'Dossiers clôturés', value: String(periodKPIs.dossiersClotures), color: [60,60,60] as [number,number,number] },
+      { label: 'Séances réalisées', value: String(periodKPIs.seancesRealisees), color: [60,60,60] as [number,number,number] },
+    ];
+
+    x = padX;
+    for (const t of tilesPeriod) {
+      doc.setDrawColor(225);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(x, y, cardW, cardH, 6, 6, 'FD');
+
+      doc.setTextColor(90);
+      doc.text(t.label, x + 12, y + 22);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(16);
+      doc.setTextColor(...t.color);
+      doc.text(t.value, x + 12, y + 46);
+
+      x += cardW + gap;
+      if (x + cardW > pageW - padX) {
+        x = padX;
+        y += cardH + gap;
+      }
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.setTextColor(0);
+    }
+
+    autoTable(doc, {
+      startY: y + cardH + 10,
+      head: [['Prestataire', 'Séances réalisées', 'Total (DT)']],
+      body:
+        periodKPIs.parPrestataire.length > 0
+          ? periodKPIs.parPrestataire.map((p) => [
+              p.prenom || p.nom ? `${p.prenom} ${p.nom}`.trim() : '—',
+              String(p.totalSeances),
+              (p.encaissement ?? 0).toFixed(2),
+            ])
+          : [['—', '0', '0.00']],
+      styles: {
+        font: 'helvetica',
+        fontSize: 10,
+        cellPadding: 6,
+        lineColor: [210, 215, 220],
+        lineWidth: 0.5,
+      },
+      headStyles: {
+        fillColor: [20, 115, 108],
+        textColor: 255,
+        halign: 'left',
+        lineColor: [190, 195, 200],
+        lineWidth: 0.75,
+      },
+      columnStyles: {
+        1: { halign: 'right' },
+        2: { halign: 'right' },
+      },
+      theme: 'grid',
+      margin: { left: 36, right: 36 },
+    });
+
+    // Pied de page
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(120);
+    const footerText = `Généré le ${formatTunisFooter(new Date())} (heure de Tunis)`;
+    const textWidth =
+      (doc.getStringUnitWidth(footerText) * doc.internal.getFontSize()) /
+      doc.internal.scaleFactor;
+    doc.text(
+      footerText,
+      (pageW - textWidth) / 2,
+      doc.internal.pageSize.getHeight() - 18
+    );
+
+    doc.save(`analytics_${effectiveRange.start}_${effectiveRange.end}.pdf`);
   };
-  const formatTunisTitle = (d: Date) =>
-    new Intl.DateTimeFormat('fr-FR', {
-      timeZone: 'Africa/Tunis',
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(d);
-  const formatTunisFooter = (d: Date) =>
-    new Intl.DateTimeFormat('fr-FR', {
-      timeZone: 'Africa/Tunis',
-      dateStyle: 'short',
-      timeStyle: 'short',
-    }).format(d);
-
-  // Titre
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(20);
-  doc.text('Analyse — Statistiques', padX, y);
-  y += 22;
-
-  // Instantané
-  const tsNow = formatTunisTitle(new Date());
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.text('Indicateurs instantanés — ' + tsNow, padX, y);
-  y += 10;
-
-  const tilesNow = [
-    { label: 'Dossiers à venir', value: String(nowKPIs.a_venir) },
-    { label: 'Dossiers en cours', value: String(nowKPIs.en_cours) },
-    { label: 'Dossiers en cours inactifs', value: String(nowKPIs.en_cours_inactifs) },
-    { label: 'Dossiers en cours débiteurs', value: String(nowKPIs.en_cours_debiteurs) },
-  ];
-  const cardW = 240, cardH = 64, gap = 14;
-  let x = padX;
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(11);
-  for (const t of tilesNow) {
-    doc.setDrawColor(225);
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(x, y, cardW, cardH, 6, 6, 'FD');
-
-    doc.setTextColor(90);
-    doc.text(t.label, x + 12, y + 22);
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
-    doc.setTextColor(20, 115, 108);
-    doc.text(t.value, x + 12, y + 46);
-
-    x += cardW + gap;
-    if (x + cardW > pageW - padX) {
-      x = padX;
-      y += cardH + gap;
-    }
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(11);
-    doc.setTextColor(0);
-  }
-  y += cardH + 12;
-
-  // Période
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.text(
-    `Indicateurs sur la période du ${formatDateFR(effectiveRange.start)} au ${formatDateFR(effectiveRange.end)}`,
-    padX,
-    y
-  );
-  y += 10;
-
-  const tilesPeriod = [
-    { label: 'Total encaissements (DT)', value: periodKPIs.totalEncaissements.toFixed(2), color: [20,115,108] as [number,number,number] },
-    { label: 'Nouveaux patients', value: String(periodKPIs.patientsDistincts), color: [60,60,60] as [number,number,number] },
-    { label: 'Dossiers ouverts', value: String(periodKPIs.dossiersOuverts), color: [60,60,60] as [number,number,number] },
-    { label: 'Dossiers clôturés', value: String(periodKPIs.dossiersClotures), color: [60,60,60] as [number,number,number] },
-    { label: 'Séances réalisées', value: String(periodKPIs.seancesRealisees), color: [60,60,60] as [number,number,number] },
-  ];
-
-  x = padX;
-  for (const t of tilesPeriod) {
-    doc.setDrawColor(225);
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(x, y, cardW, cardH, 6, 6, 'FD');
-
-    doc.setTextColor(90);
-    doc.text(t.label, x + 12, y + 22);
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
-    doc.setTextColor(...t.color);
-    doc.text(t.value, x + 12, y + 46);
-
-    x += cardW + gap;
-    if (x + cardW > pageW - padX) {
-      x = padX;
-      y += cardH + gap;
-    }
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(11);
-    doc.setTextColor(0);
-  }
-
-  // Tableau par prestataire (réalisées uniquement) + Total (DT)
-  autoTable(doc, {
-  startY: y + cardH + 10,
-  head: [['Prestataire', 'Séances réalisées', 'Total (DT)']],
-  body:
-    periodKPIs.parPrestataire.length > 0
-      ? periodKPIs.parPrestataire.map((p) => [
-          p.prenom || p.nom ? `${p.prenom} ${p.nom}`.trim() : '—',
-          String(p.totalSeances),
-          (p.encaissement ?? 0).toFixed(2),
-        ])
-      : [['—', '0', '0.00']],
-
-  // ✅ styles généraux (lignes grises)
-  styles: {
-    font: 'helvetica',
-    fontSize: 10,
-    cellPadding: 6,
-    lineColor: [210, 215, 220],   // gris clair
-    lineWidth: 0.5,               // épaisseur des bordures
-  },
-
-  // ✅ header : fond vert + bordures grises bien visibles
-  headStyles: {
-    fillColor: [20, 115, 108],    // ton vert
-    textColor: 255,
-    halign: 'left',
-    lineColor: [190, 195, 200],   // gris un poil plus foncé pour l’en-tête
-    lineWidth: 0.75,              // bordures header un peu plus épaisses
-  },
-
-  columnStyles: {
-    1: { halign: 'right' },
-    2: { halign: 'right' },
-  },
-
-  theme: 'grid',
-  margin: { left: 36, right: 36 },
-});
-
-
-  // Pied de page
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(120);
-  const footerText = `Généré le ${formatTunisFooter(new Date())} (heure de Tunis)`;
-  const textWidth = (doc.getStringUnitWidth(footerText) * doc.internal.getFontSize()) / doc.internal.scaleFactor;
-  doc.text(footerText, (pageW - textWidth) / 2, doc.internal.pageSize.getHeight() - 18);
-
-  doc.save(`analytics_${effectiveRange.start}_${effectiveRange.end}.pdf`);
-};
 
   if (!isAdmin) {
-    return <div className="p-6 text-gray-600">Accès réservé aux administrateurs.</div>;
+    return (
+      <div className="p-6 text-gray-600">Accès réservé aux administrateurs.</div>
+    );
   }
 
   /* --------------- UI --------------- */
@@ -562,7 +620,7 @@ export default function AdminAnalytics({
         </div>
       </div>
 
-      {/* Indicateurs instantanés — avec horodatage Tunis, tuiles cliquables */}
+      {/* Indicateurs instantanés */}
       <div className="bg-white rounded-xl shadow p-6">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold text-gray-900">
@@ -661,7 +719,11 @@ export default function AdminAnalytics({
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-2">
-            <select value={mode} onChange={(e) => setMode(e.target.value as 'range' | 'month')} className="px-2 py-1 bg-transparent">
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value as 'range' | 'month')}
+              className="px-2 py-1 bg-transparent"
+            >
               <option value="range">Période (dates)</option>
               <option value="month">Par mois</option>
             </select>
@@ -670,24 +732,51 @@ export default function AdminAnalytics({
           {mode === 'range' ? (
             <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-2">
               <Calendar className="w-5 h-5 text-gray-600" />
-              <input type="date" value={range.start} onChange={(e) => setRange((r) => ({ ...r, start: e.target.value }))} max={todayTunisISO} className="bg-transparent" />
+              <input
+                type="date"
+                value={range.start}
+                onChange={(e) =>
+                  setRange((r) => ({ ...r, start: e.target.value }))
+                }
+                max={todayTunisISO}
+                className="bg-transparent"
+              />
               <span className="text-gray-400">→</span>
-              <input type="date" value={range.end} onChange={(e) => setRange((r) => ({ ...r, end: e.target.value }))} max={todayTunisISO} className="bg-transparent" />
+              <input
+                type="date"
+                value={range.end}
+                onChange={(e) =>
+                  setRange((r) => ({ ...r, end: e.target.value }))
+                }
+                max={todayTunisISO}
+                className="bg-transparent"
+              />
             </div>
           ) : (
             <div className="bg-gray-50 rounded-lg p-2 w-full md:w-auto">
               <div className="flex items-center justify-center md:justify-start gap-3 mb-2">
-                <button type="button" onClick={() => setYear(ySel - 1)} className="p-2 rounded hover:bg-gray-100 text-gray-700" title="Année précédente">
+                <button
+                  type="button"
+                  onClick={() => setYear(ySel - 1)}
+                  className="p-2 rounded hover:bg-gray-100 text-gray-700"
+                  title="Année précédente"
+                >
                   <ChevronLeft className="w-5 h-5" />
                 </button>
-                <span className="min-w-[72px] text-center font-semibold text-gray-900">{ySel}</span>
+                <span className="min-w-[72px] text-center font-semibold text-gray-900">
+                  {ySel}
+                </span>
                 <button
                   type="button"
                   onClick={() => {
                     const candidate = `${ySel + 1}-${pad2(mSel)}`;
                     if (candidate <= todayYM) setYear(ySel + 1);
                   }}
-                  className={`p-2 rounded ${`${ySel + 1}-${pad2(mSel)}` > todayYM ? 'text-gray-300 cursor-not-allowed' : 'hover:bg-gray-100 text-gray-700'}`}
+                  className={`p-2 rounded ${
+                    `${ySel + 1}-${pad2(mSel)}` > todayYM
+                      ? 'text-gray-300 cursor-not-allowed'
+                      : 'hover:bg-gray-100 text-gray-700'
+                  }`}
                   title="Année suivante"
                   disabled={`${ySel + 1}-${pad2(mSel)}` > todayYM}
                 >
@@ -710,7 +799,9 @@ export default function AdminAnalytics({
                       className={[
                         'px-2 py-2 rounded text-sm',
                         'w-full',
-                        isActive ? 'bg-teal-600 text-white' : 'text-gray-700 hover:bg-gray-100',
+                        isActive
+                          ? 'bg-teal-600 text-white'
+                          : 'text-gray-700 hover:bg-gray-100',
                         isFuture ? 'opacity-40 cursor-not-allowed' : '',
                       ].join(' ')}
                       title={`${lbl} ${ySel}`}
@@ -729,46 +820,98 @@ export default function AdminAnalytics({
       <div className="bg-white rounded-xl shadow p-6 space-y-6">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold text-gray-900">
-            Indicateurs sur la période du {formatDateFR(effectiveRange.start)} au {formatDateFR(effectiveRange.end)}
+            Indicateurs sur la période du {formatDateFR(effectiveRange.start)} au{' '}
+            {formatDateFR(effectiveRange.end)}
           </h3>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <KpiCard label="Total encaissements (DT)" value={periodKPIs.totalEncaissements.toFixed(2)} loading={loadingPeriod} valueClassName="text-teal-700" />
-          <KpiCard label="Nouveaux patients" value={periodKPIs.patientsDistincts} loading={loadingPeriod} valueClassName="text-gray-800" />
-          <KpiCard label="Dossiers ouverts" value={periodKPIs.dossiersOuverts} loading={loadingPeriod} valueClassName="text-gray-800" />
-          <KpiCard label="Dossiers clôturés" value={periodKPIs.dossiersClotures} loading={loadingPeriod} valueClassName="text-gray-800" />
-          <KpiCard label="Séances réalisées" value={periodKPIs.seancesRealisees} loading={loadingPeriod} valueClassName="text-gray-800" />
+          <KpiCard
+            label="Total encaissements (DT)"
+            value={periodKPIs.totalEncaissements.toFixed(2)}
+            loading={loadingPeriod}
+            valueClassName="text-teal-700"
+          />
+          <KpiCard
+            label="Nouveaux patients"
+            value={periodKPIs.patientsDistincts}
+            loading={loadingPeriod}
+            valueClassName="text-gray-800"
+          />
+          <KpiCard
+            label="Dossiers ouverts"
+            value={periodKPIs.dossiersOuverts}
+            loading={loadingPeriod}
+            valueClassName="text-gray-800"
+          />
+          <KpiCard
+            label="Dossiers clôturés"
+            value={periodKPIs.dossiersClotures}
+            loading={loadingPeriod}
+            valueClassName="text-gray-800"
+          />
+          <KpiCard
+            label="Séances réalisées"
+            value={periodKPIs.seancesRealisees}
+            loading={loadingPeriod}
+            valueClassName="text-gray-800"
+          />
         </div>
 
-        {/* Tableau par prestataire: Séances réalisées + Total encaissement */}
+        {/* Tableau par prestataire */}
         {hasAssistants ? (
           <div className="mt-4">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">Séances par prestataire</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">
+              Séances par prestataire
+            </h3>
             <div className="overflow-x-auto">
               <table className="min-w-full border divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Prestataire</th>
-                    <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Séances réalisées</th>
-                    <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Total encaissement (DT)</th>
+                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">
+                      Prestataire
+                    </th>
+                    <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">
+                      Séances réalisées
+                    </th>
+                    <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">
+                      Total encaissement (DT)
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {loadingPeriod ? (
                     <tr>
-                      <td colSpan={3} className="px-4 py-6 text-center text-gray-500">Chargement…</td>
+                      <td
+                        colSpan={3}
+                        className="px-4 py-6 text-center text-gray-500"
+                      >
+                        Chargement…
+                      </td>
                     </tr>
                   ) : periodKPIs.parPrestataire.length === 0 ? (
                     <tr>
-                      <td colSpan={3} className="px-4 py-6 text-center text-gray-500">Aucune séance sur la période</td>
+                      <td
+                        colSpan={3}
+                        className="px-4 py-6 text-center text-gray-500"
+                      >
+                        Aucune séance sur la période
+                      </td>
                     </tr>
                   ) : (
                     periodKPIs.parPrestataire.map((p) => (
                       <tr key={p.prestataire_id} className="odd:bg-white even:bg-gray-50">
-                        <td className="px-4 py-2 text-sm text-gray-900">{p.prenom || p.nom ? `${p.prenom} ${p.nom}`.trim() : '—'}</td>
-                        <td className="px-4 py-2 text-sm text-gray-900 text-right">{p.totalSeances}</td>
-                        <td className="px-4 py-2 text-sm text-gray-900 text-right">{p.encaissement.toFixed(2)}</td>
+                        <td className="px-4 py-2 text-sm text-gray-900">
+                          {p.prenom || p.nom
+                            ? `${p.prenom} ${p.nom}`.trim()
+                            : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-900 text-right">
+                          {p.totalSeances}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-900 text-right">
+                          {p.encaissement.toFixed(2)}
+                        </td>
                       </tr>
                     ))
                   )}
@@ -806,8 +949,16 @@ function KpiCard({
         <span className="text-sm text-gray-600">{label}</span>
         {icon}
       </div>
-      <div className={`mt-2 text-2xl font-extrabold ${valueClassName ?? 'text-gray-900'}`}>
-        {loading ? <span className="animate-pulse text-gray-300">•••</span> : value}
+      <div
+        className={`mt-2 text-2xl font-extrabold ${
+          valueClassName ?? 'text-gray-900'
+        }`}
+      >
+        {loading ? (
+          <span className="animate-pulse text-gray-300">•••</span>
+        ) : (
+          value
+        )}
       </div>
     </div>
   );
