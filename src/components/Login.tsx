@@ -1,32 +1,27 @@
-// src/components/Login.tsx
-import { useEffect, useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import { Stethoscope, Mail, Phone } from 'lucide-react';
+import { useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
+import { Stethoscope, Mail, Phone } from "lucide-react";
+import { Link } from "react-router-dom";
 
 export default function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authError, setAuthError] = useState(''); // uniquement erreurs d'auth (mauvais mdp, etc.)
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const { signIn, lastBusinessError } = useAuth();
-
-  // Afficher message métier (ex: client inactif) proprement
-  const businessMessage =
-    lastBusinessError === 'INACTIVE_CLIENT'
-      ? "Votre compte est désactivé. Veuillez contacter l'administrateur de la plateforme."
-      : '';
+  const { signIn } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthError('');
+    setError("");
+    setLoading(true);
     try {
-      setLoading(true);
       await signIn(email, password);
-      // si OK, onAuthStateChange fera la suite (chargement profil)
     } catch (err: any) {
-      // Ici, ce sont *vraiment* des erreurs d'identifiants
-      // Supabase renvoie souvent: { message: 'Invalid login credentials' }
-      setAuthError('Email ou mot de passe incorrect');
+      if (err?.message === "INACTIVE_CLIENT" || err?.code === "INACTIVE_CLIENT") {
+        setError("Votre compte est desactive. Veuillez contacter l'administrateur de la plateforme.");
+      } else {
+        setError("Email ou mot de passe incorrect");
+      }
     } finally {
       setLoading(false);
     }
@@ -42,12 +37,11 @@ export default function Login() {
               <Stethoscope className="w-8 h-8 text-teal-600" />
             </div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">TaysirMed</h1>
-            <p className="text-gray-600">Connexion à votre espace</p>
+            <p className="text-gray-600">Connexion a votre espace</p>
           </div>
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email */}
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
                 Email
@@ -55,16 +49,14 @@ export default function Login() {
               <input
                 id="email"
                 type="email"
-                autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
-                placeholder="vous@domaine.com"
+                placeholder="vous@email.com"
               />
             </div>
 
-            {/* Password */}
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
                 Mot de passe
@@ -72,7 +64,6 @@ export default function Login() {
               <input
                 id="password"
                 type="password"
-                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -81,35 +72,33 @@ export default function Login() {
               />
             </div>
 
-            {/* Error messages */}
-            {(authError || businessMessage) && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm space-y-1">
-                {authError && <div>{authError}</div>}
-                {businessMessage && <div>{businessMessage}</div>}
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+                {error}
               </div>
             )}
 
-            {/* Submit */}
             <button
               type="submit"
               disabled={loading}
               className="w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-3 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Connexion…' : 'Se connecter'}
+              {loading ? "Connexion..." : "Se connecter"}
             </button>
-
-            {/* Link to signup */}
-            <div className="text-center text-sm">
-              <a href="/signup" className="text-teal-700 hover:underline">
-                Nouveau ? Créer un compte
-              </a>
-            </div>
           </form>
+
+          {/* Signup link */}
+          <div className="text-center text-sm">
+            <span className="text-gray-600">Nouveau ? </span>
+            <Link to="/signup" className="text-teal-700 hover:underline">
+              Creer un compte
+            </Link>
+          </div>
 
           {/* Contact info */}
           <div className="space-y-4">
             <p className="text-center text-xs text-gray-400">
-              Ce site est à usage personnel. Pour toute demande d’information, veuillez nous contacter :
+              Ce site est a usage personnel. Pour toute demande d’information, contactez-nous :
             </p>
 
             <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
