@@ -16,7 +16,7 @@ import {
   Clock,
   CheckCircle2,
 } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../../contexts/AuthContext';
 import DocumentsManager from './DocumentsManager';
 import EditSeanceModal from './EditSeanceModal';
 import { exportDossierToPDF } from '../utils/pdfExport';
