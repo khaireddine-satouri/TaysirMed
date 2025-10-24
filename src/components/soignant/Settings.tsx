@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { Save, Settings as SettingsIcon } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../../contexts/AuthContext';
 
 type DashFilters = {
   etat: 'all' | 'a_venir' | 'en_cours' | 'termine';
