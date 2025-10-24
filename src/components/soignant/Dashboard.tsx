@@ -1,8 +1,8 @@
 // Dashboard.tsx
 import { useState, useEffect, useMemo } from 'react';
-import { supabase, DossierSoin, Patient, Seance } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
-import { exportDossiersToExcel } from '../utils/exportDossiersExcel';
+import { supabase, DossierSoin, Patient, Seance } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import { exportDossiersToExcel } from '../../utils/exportDossiersExcel';
 
 interface DashboardProps {
   onSelectDossier: (dossier: DossierSoin, patient: Patient) => void;
