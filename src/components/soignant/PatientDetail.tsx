@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { supabase, Patient, DossierSoin } from '../lib/supabase';
+import { supabase, Patient, DossierSoin } from '../../lib/supabase';
 import {
   ArrowLeft,
   Plus,
@@ -15,7 +15,7 @@ import {
   Upload,
   Phone,
 } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface PatientDetailProps {
   patient: Patient;
