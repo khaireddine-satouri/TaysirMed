@@ -100,8 +100,7 @@ export default function Login({ onSwitchToSignup }: { onSwitchToSignup: () => vo
           {/* Contact info */}
           <div className="space-y-4">
             <p className="text-center text-xs text-gray-400">
-              Ce site est à usage personnel. Pour toute demande d’information, veuillez nous
-              contacter :
+              Besoin d'aide ? Contactez nous :
             </p>
             <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
               <Mail className="w-4 h-4 text-teal-600" />
@@ -116,6 +115,10 @@ export default function Login({ onSwitchToSignup }: { onSwitchToSignup: () => vo
               </a>
             </div>
           </div>
+          {/* Legal */}
+          <p className="text-center text-[11px] text-gray-400">
+            En vous connectant, vous acceptez nos conditions d’utilisation et notre politique de confidentialité.
+          </p>
         </div>
       </div>
     </div>
