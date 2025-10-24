@@ -1,502 +1,245 @@
 // src/App.tsx
-import { useEffect, useRef, useState } from 'react';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import Login from './components/Login';
-import Signup from './components/Signup';
+import { BrowserRouter, Routes, Route, Navigate, Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
 
-// ===== Soignant (V1 inchangé) =====
-import SoignantLayout from './components/layouts/SoignantLayout';
-import PatientsList from './components/soignant/PatientsList';
-import PatientDetail from './components/soignant/PatientDetail';
-import DossierDetail from './components/soignant/DossierDetail';
-import EffectifDuJour from './components/soignant/EffectifDuJour';
-import Dashboard, { Filters as DashboardFilters } from './components/soignant/Dashboard';
-import Settings from './components/soignant/Settings';
-import AdminAnalytics from './components/soignant/AdminAnalytics';
-import TicketsCollaborateur from './components/soignant/TicketsCollaborateur';
-import TicketsAdmin from './components/soignant/TicketsAdmin';
-import Planning from './components/soignant/Planning';
+// Auth pages
+import Login from "./components/Login";
+import Signup from "./components/Signup";
 
-// ===== Médecin =====
-import MedecinLayout from './components/layouts/MedecinLayout';
-import RendezVousList from './components/medecin/RendezVousList';
+// Layouts
+import SoignantLayout from "./components/layouts/SoignantLayout";
+import MedecinLayout from "./components/layouts/MedecinLayout";
 
-import { supabase, Patient, DossierSoin } from './lib/supabase';
+// Médecin
+import RendezVousList from "./components/medecin/RendezVousList";
 
-const LOAD_TIMEOUT_MS = 12_000;   // après 12s: déconnexion + redirection login
-const WARNING_AFTER_MS = 6_000;   // après 6s: petit bandeau d’avertissement
+// Soignant (V1 existants, déplacés dans /soignant)
+import Dashboard from "./components/soignant/Dashboard";
+import PatientsList from "./components/soignant/PatientsList";
+import PatientDetail from "./components/soignant/PatientDetail";
+import DossierDetail from "./components/soignant/DossierDetail";
+import Planning from "./components/soignant/Planning";
+import Settings from "./components/soignant/Settings";
+import TicketsAdmin from "./components/soignant/TicketsAdmin";
+import TicketsCollaborateur from "./components/soignant/TicketsCollaborateur";
 
-type View =
-  | 'dashboard'
-  | 'analyse'
-  | 'patients'
-  | 'effectif'
-  | 'planning'
-  | 'settings'
-  | 'tickets_collab'
-  | 'tickets_admin'
-  | 'rdv';
-
-type ClientType = 'soignant' | 'medecin';
-
-function SpinnerFull() {
-  return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600" />
-    </div>
-  );
+/* --------------------------------------------------------------------------------
+ * Gates (mini-protecteurs locaux, pour rester self-contained dans App.tsx)
+ * -------------------------------------------------------------------------------- */
+function ProtectedRoute({ children }: { children: JSX.Element }) {
+  const { session, loading } = useAuth();
+  if (loading) return <FullPageLoader />;
+  if (!session) return <Navigate to="/login" replace />;
+  return children;
 }
 
-/** Carte anti-blocage quand user connecté mais client_id pas encore prêt */
-function BootstrapGate({
-  onRetry,
-  onLogout,
-  message,
-  loading,
+function ClientGate({
+  allow,
+  children,
 }: {
-  onRetry: () => void;
-  onLogout: () => void;
-  message?: string;
-  loading?: boolean;
+  allow: Array<"soignant" | "medecin">;
+  children: JSX.Element;
 }) {
+  const { loading, profile } = useAuth();
+  if (loading) return <FullPageLoader />;
+  if (!profile) return <Navigate to="/login" replace />;
+  if (!allow.includes(profile.type_client)) return <Navigate to="/" replace />;
+  return children;
+}
+
+function RoleGate({
+  allow,
+  children,
+}: {
+  allow: Array<"admin" | "assistant" | "secretaire">;
+  children: JSX.Element;
+}) {
+  const { loading, profile } = useAuth();
+  if (loading) return <FullPageLoader />;
+  if (!profile) return <Navigate to="/login" replace />;
+  if (!allow.includes(profile.type_utilisateur)) return <Navigate to="/" replace />;
+  return children;
+}
+
+/* --------------------------------------------------------------------------------
+ * Charte: s'affiche à la première connexion ; si refus ➜ la charte réapparaitra
+ * à chaque nouvelle connexion jusqu’à acceptation. (texte vide pour l’instant)
+ * -------------------------------------------------------------------------------- */
+function CharterGate() {
+  const { user } = useAuth();
+  const storageKey = useMemo(() => (user ? `charter:${user.id}:accepted` : ""), [user?.id]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    const accepted = localStorage.getItem(storageKey);
+    // si jamais non accepté, on ouvre
+    if (accepted !== "true") setOpen(true);
+  }, [user, storageKey]);
+
+  if (!open) return null;
+
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-lg bg-white border rounded-xl shadow-sm p-6">
-        <h2 className="text-lg font-semibold mb-2">Préparation de votre espace…</h2>
-        <p className="text-gray-600 mb-4">
-          {message ||
-            "Nous configurons votre espace (client & profil). Cela prend quelques secondes. Vous pouvez relancer la vérification si besoin."}
-        </p>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onRetry}
-            disabled={!!loading}
-            className="px-4 py-2 rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-50"
-          >
-            {loading ? 'Vérification…' : 'Réessayer'}
-          </button>
-          <button
-            onClick={onLogout}
-            className="px-4 py-2 rounded-lg border hover:bg-gray-50"
-          >
-            Se déconnecter
-          </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-[min(680px,95vw)] rounded-xl bg-white p-5 shadow-xl">
+        <h2 className="text-lg font-semibold mb-3">Charte d’utilisation</h2>
+        {/* Texte volontairement vide comme demandé */}
+        <div className="prose prose-sm max-w-none min-h-[160px] p-3 border rounded bg-gray-50">
+          {/* contenu à venir */}
+        </div>
+        <div className="mt-4 flex items-center justify-between">
+          <span className="text-xs text-gray-500">
+            Vous devez accepter pour ne plus revoir cette charte aux prochaines connexions.
+          </span>
+          <div className="flex gap-2">
+            <button
+              className="px-3 py-2 rounded border hover:bg-gray-50"
+              onClick={() => {
+                // Refuser: on ne marque rien en localStorage -> elle reviendra au prochain login
+                setOpen(false);
+              }}
+            >
+              Refuser
+            </button>
+            <button
+              className="px-3 py-2 rounded bg-teal-600 text-white hover:bg-teal-700"
+              onClick={() => {
+                if (storageKey) localStorage.setItem(storageKey, "true");
+                setOpen(false);
+              }}
+            >
+              Accepter
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function AppContent() {
-  const { user, userBase, loading, signOut } = useAuth();
-
-  // Type du client (soignant | medecin)
-  const [clientType, setClientType] = useState<ClientType | null>(null);
-  const [clientLoading, setClientLoading] = useState(true);
-
-  // Gate “busy” (quand client_id manque)
-  const [gateBusy, setGateBusy] = useState(false);
-
-  // Watchdog (avertissement + auto redirect)
-  const [tookTooLong, setTookTooLong] = useState(false);
-  const timeoutRef = useRef<number | null>(null);
-  const warnRef = useRef<number | null>(null);
-
-  const isAdmin = userBase?.type_utilisateur === 'admin';
-  const isAssistant = userBase?.type_utilisateur === 'assistant';
-
-  // navigation
-  const [currentView, setCurrentView] = useState<View>('patients');
-
-  // états V1 (soignant)
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-  const [selectedDossier, setSelectedDossier] = useState<DossierSoin | null>(null);
-  const [dashOverrideFilters, setDashOverrideFilters] =
-    useState<DashboardFilters | null>(null);
-
-  const hasInitializedDefaultView = useRef(false);
-
-  // routing minimaliste (sans react-router)
-  const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
-
-  // ===== Watchdog: si “loading” (auth) OU “clientLoading” dure trop, on force retour login
-  useEffect(() => {
-    const skip = pathname === '/signup';
-
-    const clearTimers = () => {
-      if (timeoutRef.current) {
-        window.clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-      if (warnRef.current) {
-        window.clearTimeout(warnRef.current);
-        warnRef.current = null;
-      }
-      setTookTooLong(false);
-    };
-
-    if (!skip && (loading || clientLoading)) {
-      warnRef.current = window.setTimeout(
-        () => setTookTooLong(true),
-        WARNING_AFTER_MS
-      ) as unknown as number;
-
-      timeoutRef.current = window.setTimeout(async () => {
-        try {
-          await signOut();
-        } catch {
-          // noop
-        } finally {
-          if (typeof window !== 'undefined') {
-            window.location.replace('/login');
-          }
-        }
-      }, LOAD_TIMEOUT_MS) as unknown as number;
-    } else {
-      clearTimers();
-    }
-
-    return clearTimers;
-  }, [loading, clientLoading, pathname, signOut]);
-
-  // Charger type_client depuis la table clients
-  useEffect(() => {
-    const loadClientType = async () => {
-      if (!userBase?.client_id) {
-        setClientType(null);
-        setClientLoading(false);
-        return;
-      }
-      setClientLoading(true);
-      const { data, error } = await supabase
-        .from('clients')
-        .select('type_client')
-        .eq('id', userBase.client_id)
-        .maybeSingle();
-
-      if (error) {
-        console.error('Erreur chargement type_client:', error);
-        setClientType(null);
-      } else {
-        setClientType((data?.type_client ?? null) as ClientType | null);
-      }
-      setClientLoading(false);
-    };
-
-    if (userBase) loadClientType();
-  }, [userBase]);
-
-  // Vue de départ (en fonction rôle & type_client)
-  useEffect(() => {
-    if (loading || clientLoading) return;
-    if (!user || !userBase || !clientType) return;
-
-    if (!hasInitializedDefaultView.current) {
-      let startView: View = 'patients';
-      if (clientType === 'soignant') {
-        if (isAdmin) startView = 'analyse';
-        else if (isAssistant) startView = 'effectif';
-        else startView = 'patients';
-      } else {
-        startView = 'rdv';
-      }
-      setCurrentView(startView);
-      hasInitializedDefaultView.current = true;
-    }
-  }, [loading, clientLoading, user, userBase, clientType, isAdmin, isAssistant]);
-
-  // ===== écrans non authentifiés =====
-  if (loading) {
-    return (
-      <div className="relative">
-        <SpinnerFull />
-        {tookTooLong && (
-          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2 rounded-lg shadow">
-            La connexion prend plus de temps que prévu…{' '}
-            <button
-              onClick={() => (typeof window !== 'undefined' ? window.location.replace('/login') : null)}
-              className="underline ml-1"
-            >
-              revenir au login
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (!user || !userBase) {
-    hasInitializedDefaultView.current = false;
-
-    if (pathname === '/signup') {
-      return <Signup />;
-    }
-
-    return (
-      <Login
-        onGoSignup={() => {
-          if (typeof window !== 'undefined') window.location.href = '/signup';
-        }}
-      />
-    );
-  }
-
-  // ===== User connecté mais pas de client_id -> Gate (pas de hooks conditionnels : state défini plus haut)
-  if (!userBase.client_id) {
-    const retry = async () => {
-      if (gateBusy) return;
-      setGateBusy(true);
-      try {
-        // Stratégie simple: on re-tente un refresh “doux” (au besoin, appeler une RPC idempotente)
-        const { data: ub } = await supabase
-          .from('users_base')
-          .select('*')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        if (ub?.client_id && typeof window !== 'undefined') {
-          window.location.reload();
-        } else {
-          // fallback: simple reload
-          if (typeof window !== 'undefined') window.location.reload();
-        }
-      } catch (e) {
-        console.error('Retry bootstrap error:', e);
-      } finally {
-        setGateBusy(false);
-      }
-    };
-
-    const logout = () =>
-      signOut().finally(() => {
-        if (typeof window !== 'undefined') window.location.replace('/login');
-      });
-
-    return <BootstrapGate loading={gateBusy} onRetry={retry} onLogout={logout} />;
-  }
-
-  // ===== Client connu mais type non encore chargé : petit spinner + avertissement possible
-  if (clientLoading) {
-    return (
-      <div className="relative">
-        <SpinnerFull />
-        {tookTooLong && (
-          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2 rounded-lg shadow">
-            Initialisation de l’espace en cours…
-            <button
-              onClick={async () => {
-                try {
-                  await signOut();
-                } finally {
-                  if (typeof window !== 'undefined') window.location.replace('/login');
-                }
-              }}
-              className="underline ml-1"
-            >
-              revenir au login
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ===== Navigation commune =====
-  const handleNavigate = (view: string) => {
-    setCurrentView(view as View);
-    setSelectedPatient(null);
-    setSelectedDossier(null);
-    if (view === 'dashboard') setDashOverrideFilters(null);
-  };
-
-  // ===== Actions V1 (soignant) =====
-  const handleSelectPatient = (patient: Patient) => {
-    setSelectedPatient(patient);
-    setSelectedDossier(null);
-  };
-  const handleSelectDossier = (dossier: DossierSoin) => setSelectedDossier(dossier);
-  const handleBackToPatients = () => {
-    setSelectedPatient(null);
-    setSelectedDossier(null);
-  };
-  const handleBackToDossiers = () => setSelectedDossier(null);
-
-  const openPatientById = async (patientId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('patients')
-        .select('*')
-        .eq('id', patientId)
-        .single();
-      if (error || !data) return;
-      setSelectedPatient(data as Patient);
-      setSelectedDossier(null);
-      setCurrentView('patients');
-    } catch (e) {
-      console.error('Erreur chargement patient:', e);
-    }
-  };
-
-  const openDossierById = async (dossierId: string) => {
-    try {
-      const { data: dossier, error: dErr } = await supabase
-        .from('dossiers_soins')
-        .select('*')
-        .eq('id', dossierId)
-        .single();
-      if (dErr || !dossier) return;
-
-      const { data: patient, error: pErr } = await supabase
-        .from('patients')
-        .select('*')
-        .eq('id', (dossier as any).patient_id)
-        .single();
-      if (pErr || !patient) return;
-
-      setSelectedPatient(patient as Patient);
-      setSelectedDossier(dossier as DossierSoin);
-      setCurrentView('patients');
-    } catch (e) {
-      console.error('Erreur chargement dossier/patient:', e);
-    }
-  };
-
-  const openDashboardWithFilters = (filters: DashboardFilters) => {
-    setDashOverrideFilters(filters);
-    setCurrentView('dashboard');
-  };
-
-  // ===== Rendu Soignant (V1 inchangé) =====
-  const renderSoignant = () => {
-    const isAdminLocal = userBase?.type_utilisateur === 'admin';
-
-    const renderContent = () => {
-      if (selectedDossier && selectedPatient) {
-        return (
-          <DossierDetail
-            dossier={selectedDossier}
-            patient={selectedPatient}
-            onBack={handleBackToDossiers}
-          />
-        );
-      }
-
-      if (selectedPatient) {
-        return (
-          <PatientDetail
-            patient={selectedPatient}
-            onBack={handleBackToPatients}
-            onSelectDossier={handleSelectDossier}
-          />
-        );
-      }
-
-      switch (currentView) {
-        case 'dashboard':
-          return isAdminLocal ? (
-            <Dashboard
-              overrideInitialFilters={dashOverrideFilters}
-              onSelectDossier={(dossier, patient) => {
-                setSelectedPatient(patient);
-                setSelectedDossier(dossier);
-              }}
-            />
-          ) : (
-            <PatientsList onSelectPatient={handleSelectPatient} />
-          );
-
-        case 'analyse':
-          return isAdminLocal ? (
-            <AdminAnalytics onOpenDashboardWithFilters={openDashboardWithFilters} />
-          ) : (
-            <PatientsList onSelectPatient={handleSelectPatient} />
-          );
-
-        case 'patients':
-          return <PatientsList onSelectPatient={handleSelectPatient} />;
-
-        case 'effectif':
-          return (
-            <EffectifDuJour
-              onOpenDossier={(dossier, patient) => {
-                setSelectedPatient(patient as Patient);
-                setSelectedDossier(dossier as DossierSoin);
-                setCurrentView('patients');
-              }}
-            />
-          );
-
-        case 'planning':
-          return (
-            <Planning
-              onOpenDossier={(dossier, patient) => {
-                setSelectedPatient(patient as Patient);
-                setSelectedDossier(dossier as DossierSoin);
-                setCurrentView('patients');
-              }}
-            />
-          );
-
-        case 'settings':
-          return isAdminLocal ? (
-            <Settings />
-          ) : (
-            <PatientsList onSelectPatient={handleSelectPatient} />
-          );
-
-        case 'tickets_collab':
-          return userBase?.type_utilisateur !== 'admin' ? (
-            <TicketsCollaborateur
-              onOpenPatient={openPatientById}
-              onOpenDossier={openDossierById}
-            />
-          ) : (
-            <PatientsList onSelectPatient={handleSelectPatient} />
-          );
-
-        case 'tickets_admin':
-          return isAdminLocal ? (
-            <TicketsAdmin
-              onOpenPatient={openPatientById}
-              onOpenDossier={openDossierById}
-            />
-          ) : (
-            <PatientsList onSelectPatient={handleSelectPatient} />
-          );
-
-        default:
-          return <PatientsList onSelectPatient={handleSelectPatient} />;
-      }
-    };
-
-    return (
-      <SoignantLayout currentView={currentView} onNavigate={handleNavigate}>
-        {renderContent()}
-      </SoignantLayout>
-    );
-  };
-
-  // ===== Rendu Médecin =====
-  const renderMedecin = () => {
-    return (
-      <MedecinLayout>
-        {currentView === 'rdv' ? <RendezVousList /> : <RendezVousList />}
-      </MedecinLayout>
-    );
-  };
-
-  // Switch layout selon type_client
-  if (clientType === 'soignant') return renderSoignant();
-  if (clientType === 'medecin') return renderMedecin();
-
-  // Sécurité: cas edge
-  return <SpinnerFull />;
+/* --------------------------------------------------------------------------------
+ * Page de redirection selon type_client
+ * -------------------------------------------------------------------------------- */
+function LandingRedirect() {
+  const { loading, isSoignant, isMedecin, session } = useAuth();
+  if (loading) return <FullPageLoader />;
+  if (!session) return <Navigate to="/login" replace />;
+  if (isSoignant) return <Navigate to="/soignant" replace />;
+  if (isMedecin) return <Navigate to="/medecin/consultations" replace />;
+  return (
+    <div className="p-6">
+      Profil incomplet. <Link className="underline" to="/login">Se reconnecter</Link>
+    </div>
+  );
 }
 
+/* --------------------------------------------------------------------------------
+ * Tickets router (admin -> TicketsAdmin, sinon -> TicketsCollaborateur)
+ * -------------------------------------------------------------------------------- */
+function TicketsRouter() {
+  const { isAdmin } = useAuth();
+  return isAdmin ? <TicketsAdmin /> : <TicketsCollaborateur />;
+}
+
+/* --------------------------------------------------------------------------------
+ * Loader simple
+ * -------------------------------------------------------------------------------- */
+function FullPageLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600" />
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------------------------
+ * App
+ * -------------------------------------------------------------------------------- */
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <BrowserRouter>
+        {/* La Charte se monte globalement une fois l'utilisateur connecté */}
+        <CharterGate />
+        <Routes>
+          {/* Public */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/signup" element={<Signup />} />
+
+          {/* Root: envoie vers layout approprié */}
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <LandingRedirect />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* ================== SOIGNANT ================== */}
+          <Route
+            path="/soignant"
+            element={
+              <ProtectedRoute>
+                <ClientGate allow={["soignant"]}>
+                  <SoignantLayout />
+                </ClientGate>
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Dashboard />} />
+            <Route path="patients" element={<PatientsList />} />
+            <Route path="patients/:id" element={<PatientDetail />} />
+            <Route path="dossiers/:id" element={<DossierDetail />} />
+            <Route path="planning" element={<Planning />} />
+          </Route>
+
+          {/* ================== MEDECIN ================== */}
+          <Route
+            path="/medecin"
+            element={
+              <ProtectedRoute>
+                <ClientGate allow={["medecin"]}>
+                  <MedecinLayout />
+                </ClientGate>
+              </ProtectedRoute>
+            }
+          >
+            {/* par défaut: liste des prochains rendez-vous (peut être vide) */}
+            <Route index element={<Navigate to="consultations" replace />} />
+            <Route path="consultations" element={<RendezVousList />} />
+            {/* à venir: patients / dossiers médicaux */}
+            {/* <Route path="patients" element={<PatientsList />} /> */}
+            {/* <Route path="patients/:id" element={<PatientDetail />} /> */}
+            {/* <Route path="dossiers" element={<DossiersMedecinList />} /> */}
+            {/* <Route path="dossiers/:id" element={<DossierMedecinDetail />} /> */}
+          </Route>
+
+          {/* ================== COMMUNS ================== */}
+          <Route
+            path="/tickets"
+            element={
+              <ProtectedRoute>
+                <TicketsRouter />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <RoleGate allow={["admin"]}>
+                  <Settings />
+                </RoleGate>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* 404 -> home */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
     </AuthProvider>
   );
 }
