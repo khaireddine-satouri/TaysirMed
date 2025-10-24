@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase, Document } from '../lib/supabase';
 import { Upload, FileText, Image, Trash2, X, Camera } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface DocumentsManagerProps {
   dossierId: string;
