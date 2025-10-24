@@ -39,7 +39,7 @@ type SoignantView =
   | "tickets_admin";
 
 function AppContent() {
-  const { user, profile, loading } = useAuth();
+  const { user, userBase, loading } = useAuth();
   const [showSignup, setShowSignup] = useState(false);
 
   // Navigation soignant
@@ -49,12 +49,12 @@ function AppContent() {
   const [dashOverrideFilters, setDashOverrideFilters] = useState<DashboardFilters | null>(null);
   const hasInitialized = useRef(false);
 
-  const isAdmin = profile?.type_utilisateur === "admin";
-  const isAssistant = profile?.type_utilisateur === "assistant";
+  const isAdmin = userBase?.type_utilisateur === "admin";
+  const isAssistant = userBase?.type_utilisateur === "assistant";
 
   // Vue par défaut
   useEffect(() => {
-    if (loading || !profile) return;
+    if (loading || !userBase) return;
     if (!hasInitialized.current) {
       let startView: SoignantView = "patients";
       if (isAdmin) startView = "analyse";
@@ -63,7 +63,7 @@ function AppContent() {
       setCurrentView(startView);
       hasInitialized.current = true;
     }
-  }, [loading, profile, isAdmin, isAssistant]);
+  }, [loading, userBase, isAdmin, isAssistant]);
 
   if (loading) {
     return (
@@ -73,7 +73,7 @@ function AppContent() {
     );
   }
 
-  if (!user || !profile) {
+  if (!user || !userBase) {
     hasInitialized.current = false;
     return showSignup ? (
       <Signup onSwitchToLogin={() => setShowSignup(false)} />
@@ -182,7 +182,7 @@ function AppContent() {
         return isAdmin ? <Settings /> : <PatientsList onSelectPatient={handleSelectPatient} />;
 
       case "tickets_collab":
-        return profile.type_utilisateur !== "admin" ? (
+        return userBase.type_utilisateur !== "admin" ? (
           <TicketsCollaborateur onOpenPatient={openPatientById} onOpenDossier={openDossierById} />
         ) : (
           <PatientsList onSelectPatient={handleSelectPatient} />
@@ -197,7 +197,7 @@ function AppContent() {
   };
 
   // ==== rendu final ====
-  if (profile.type_client === "soignant") {
+  if (userBase.type_client === "soignant") {
     return (
       <SoignantLayout currentView={currentView} onNavigate={handleNavigate}>
         {renderSoignantContent()}
@@ -205,7 +205,7 @@ function AppContent() {
     );
   }
 
-  if (profile.type_client === "medecin") {
+  if (userBase.type_client === "medecin") {
     return (
       <MedecinLayout currentView={currentView} onNavigate={setCurrentView}>
         {currentView === "rendezvous" && <RendezVousList />}
