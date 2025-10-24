@@ -32,9 +32,9 @@ type View =
   | 'settings'
   | 'tickets_collab'
   | 'tickets_admin'
-  | 'rdv'; // vue par défaut pour le médecin
+  | 'rdv';
 
-type ClientType = 'soignant' | 'medecin';
+type ClientType = 'soignant' | 'medecin' | null;
 
 function SpinnerFull() {
   return (
@@ -47,12 +47,8 @@ function SpinnerFull() {
 function AppContent() {
   const { user, userBase, loading } = useAuth();
 
-  // type_client du client courant
-  const [clientType, setClientType] = useState<ClientType | null>(null);
-  const [clientLoading, setClientLoading] = useState<boolean>(false);
-
-  const isAdmin = userBase?.type_utilisateur === 'admin';
-  const isAssistant = userBase?.type_utilisateur === 'assistant';
+  // type_client (on ne bloque PAS le rendu dessus)
+  const [clientType, setClientType] = useState<ClientType>(null);
 
   // navigation
   const [currentView, setCurrentView] = useState<View>('patients');
@@ -63,119 +59,76 @@ function AppContent() {
   const [dashOverrideFilters, setDashOverrideFilters] =
     useState<DashboardFilters | null>(null);
 
-  const hasInitializedDefaultView = useRef(false);
+  const hasPickedInitialView = useRef(false);
+
+  const isAdmin = userBase?.type_utilisateur === 'admin';
+  const isAssistant = userBase?.type_utilisateur === 'assistant';
 
   // routing minimaliste (sans react-router)
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
 
-  // Charger type_client à partir de clients(client_id)
-  useEffect(() => {
-    const loadClientType = async () => {
-      if (!userBase?.client_id) {
-        // Aucun client encore rattaché → pas de fetch
-        setClientType(null);
-        setClientLoading(false);
-        return;
-      }
-      setClientLoading(true);
-      const { data, error } = await supabase
-        .from('clients')
-        .select('type_client')
-        .eq('id', userBase.client_id)
-        .maybeSingle();
-
-      if (error) {
-        console.error('Erreur chargement type_client:', error);
-        setClientType(null);
-      } else {
-        setClientType((data?.type_client ?? null) as ClientType | null);
-      }
-      setClientLoading(false);
-    };
-
-    if (userBase) loadClientType();
-  }, [userBase]);
-
-  // Vue de départ dépendant du rôle et du type_client
-  useEffect(() => {
-    if (loading || clientLoading) return;
-    if (!user || !userBase) return;
-
-    if (!hasInitializedDefaultView.current) {
-      let startView: View = 'patients';
-
-      if (clientType === 'soignant') {
-        if (isAdmin) startView = 'analyse';
-        else if (isAssistant) startView = 'effectif';
-        else startView = 'patients';
-      } else if (clientType === 'medecin') {
-        startView = 'rdv';
-      } else {
-        // pas encore de client rattaché → laisser la vue par défaut (patients) mais on ne rendra pas un layout soignant
-      }
-
-      setCurrentView(startView);
-      hasInitializedDefaultView.current = true;
-    }
-  }, [loading, clientLoading, user, userBase, clientType, isAdmin, isAssistant]);
-
-  // ===== écrans non authentifiés =====
+  // 1) Auth strict: spinner UNIQUEMENT pendant l’auth
   if (loading) return <SpinnerFull />;
 
+  // 2) Non connecté: Login/Signup
   if (!user || !userBase) {
-    hasInitializedDefaultView.current = false;
-
-    if (pathname === '/signup') {
-      return <Signup />;
-    }
+    hasPickedInitialView.current = false;
+    if (pathname === '/signup') return <Signup />;
 
     return (
       <Login
         onGoSignup={() => {
-          if (typeof window !== 'undefined') {
-            window.location.href = '/signup';
-          }
+          if (typeof window !== 'undefined') window.location.href = '/signup';
         }}
       />
     );
   }
 
-  // Toujours spinner pendant qu’on lit le client
-  if (clientLoading) return <SpinnerFull />;
+  // 3) Charger type_client sans bloquer le rendu
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      if (!userBase?.client_id) {
+        // si pas encore de client_id (bootstrap en cours), ne rien forcer
+        return;
+      }
+      const { data, error } = await supabase
+        .from('clients')
+        .select('type_client')
+        .eq('id', userBase.client_id)
+        .maybeSingle();
+      if (!ignore) {
+        if (!error && data?.type_client) {
+          setClientType(data.type_client as ClientType);
+        }
+      }
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, [userBase?.client_id]);
 
-  // Connecté mais pas encore de client rattaché (ex: bootstrap non terminé)
-  if (!clientType) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white p-6 rounded-xl shadow-sm max-w-md w-full text-center border">
-          <p className="text-gray-700">
-            Votre profil est chargé mais aucun espace client n’est encore rattaché.
-          </p>
-          <p className="text-sm text-gray-500 mt-2">
-            Si vous venez de créer votre compte, patientez quelques secondes puis rechargez la page.
-          </p>
-          <div className="mt-4 flex items-center justify-center gap-2">
-            <button
-              onClick={() => window.location.reload()}
-              className="px-4 py-2 rounded-lg bg-teal-600 text-white hover:bg-teal-700"
-            >
-              Recharger
-            </button>
-            <a
-              href="/logout"
-              onClick={(e) => {
-                e.preventDefault();
-                supabase.auth.signOut().finally(() => window.location.replace('/'));
-              }}
-              className="px-4 py-2 rounded-lg border hover:bg-gray-50"
-            >
-              Se déconnecter
-            </a>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // 4) Choisir la vue de départ DÈS qu’on connaît le rôle ; si plus tard on apprend que c’est “médecin”, on bascule sur 'rdv'
+  useEffect(() => {
+    if (!userBase || hasPickedInitialView.current) return;
+
+    // choix immédiat basé sur le rôle (pour ne pas bloquer)
+    let startView: View = 'patients';
+    if (isAdmin) startView = 'analyse';
+    else if (isAssistant) startView = 'effectif';
+
+    setCurrentView(startView);
+    hasPickedInitialView.current = true;
+  }, [userBase, isAdmin, isAssistant]);
+
+  // 5) Si on apprend que c’est un client “médecin”, on bascule la vue par défaut sur RDV
+  useEffect(() => {
+    if (!hasPickedInitialView.current) return;
+    if (clientType === 'medecin') {
+      setCurrentView('rdv');
+      // on ne reset pas hasPickedInitialView: on a déjà une vue choisie
+    }
+  }, [clientType]);
 
   // ===== Navigation commune =====
   const handleNavigate = (view: string) => {
@@ -354,6 +307,7 @@ function AppContent() {
 
   // ===== Rendu Médecin =====
   const renderMedecin = () => {
+    // Vue par défaut : ‘rdv’
     return (
       <MedecinLayout>
         {currentView === 'rdv' ? <RendezVousList /> : <RendezVousList />}
@@ -361,9 +315,11 @@ function AppContent() {
     );
   };
 
-  // Switch layout selon type_client
-  if (clientType === 'soignant') return renderSoignant();
-  return renderMedecin();
+  // 6) Choix du layout:
+  //    - tant qu’on ne sait pas, on affiche Soignant (expérience immédiate)
+  //    - quand clientType devient "medecin", on bascule vers Medecin
+  if (clientType === 'medecin') return renderMedecin();
+  return renderSoignant();
 }
 
 export default function App() {
