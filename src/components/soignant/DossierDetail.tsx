@@ -19,7 +19,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import DocumentsManager from './DocumentsManager';
 import EditSeanceModal from './EditSeanceModal';
-import { exportDossierToPDF } from '../utils/pdfExport';
+import { exportDossierToPDF } from '../../utils/pdfExport';
 
 // ✅ modale spécialisée dossier (programmation multiple)
 import ScheduleSeancesForDossierModal from './ScheduleSeancesForDossierModal';
