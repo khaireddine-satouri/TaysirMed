@@ -1,55 +1,64 @@
-// src/components/Signup.tsx
-import { useState } from 'react';
-import { Stethoscope } from 'lucide-react';
-import { supabase, ClientType } from '../lib/supabase';
+import { useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { supabase } from "../../src/lib/supabase";
+import { Stethoscope } from "lucide-react";
 
 export default function Signup() {
-  const [nom, setNom] = useState('');
-  const [prenom, setPrenom] = useState('');
-  const [email, setEmail] = useState('');
-  const [pwd, setPwd] = useState('');
-  const [typeClient, setTypeClient] = useState<ClientType>('soignant');
-
+  const nav = useNavigate();
+  const [nom, setNom] = useState("");
+  const [prenom, setPrenom] = useState("");
+  const [typeClient, setTypeClient] = useState<"soignant" | "medecin">("soignant");
+  const [email, setEmail] = useState("");
+  const [pwd, setPwd] = useState("");
   const [loading, setLoading] = useState(false);
-  const [okMsg, setOkMsg] = useState('');
-  const [errMsg, setErrMsg] = useState('');
+  const [err, setErr] = useState("");
 
-  const submit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrMsg('');
-    setOkMsg('');
+    setErr("");
     setLoading(true);
+
     try {
-      const { data, error } = await supabase.auth.signUp({
+      // 1) Creation du compte Auth avec metadonnees
+      const { data: sign, error: signErr } = await supabase.auth.signUp({
         email,
         password: pwd,
         options: {
           data: {
             nom,
             prenom,
-            type_client: typeClient, // ⬅️ le trigger lira ça
+            type_utilisateur: "admin", // tres important pour users_base
+            type_client: typeClient,   // soignant | medecin
           },
-          // NOTE: si email confirmation activée dans Supabase Auth,
-          // il n'y aura pas de session à la création.
         },
       });
+      if (signErr) throw signErr;
 
-      if (error) throw error;
-
-      // Le trigger va créer clients + users_base(admin) automatiquement.
-      // Si la confirmation email est activée, on prévient l'utilisateur.
-      const needsEmailConfirmation = !data.session;
-      if (needsEmailConfirmation) {
-        setOkMsg(
-          "Compte créé. Veuillez confirmer votre adresse e-mail, puis connectez-vous."
-        );
-      } else {
-        setOkMsg("Compte créé avec succès. Redirection…");
-        setTimeout(() => window.location.replace('/'), 800);
+      // Si la confirmation email est active, l'utilisateur n'est pas connecte immédiatement
+      // On affiche un message et on stoppe proprement.
+      if (!sign.session) {
+        alert("Compte cree. Verifiez votre email pour confirmer votre inscription.");
+        return nav("/login");
       }
-    } catch (err: any) {
-      console.error(err);
-      setErrMsg(err?.message ?? 'Erreur lors de la création du compte');
+
+      // 2) Provisionning: creer le client + attacher users_base.client_id
+      const cabinetName = `Cabinet ${nom} ${prenom}`.trim().replace(/\s+/g, " ");
+      const { error: rpcErr } = await supabase.rpc("bootstrap_create_client_for_current_user", {
+        p_client_name: cabinetName,
+      });
+      if (rpcErr) {
+        // Fallback message explicite (souvent RPC manquant)
+        console.error(rpcErr);
+        throw new Error(
+          "Initialisation du compte impossible (RPC manquant). Merci de contacter le support."
+        );
+      }
+
+      // 3) Redirection selon type_client
+      if (typeClient === "soignant") nav("/soignant", { replace: true });
+      else nav("/medecin/consultations", { replace: true });
+    } catch (e: any) {
+      setErr(e?.message ?? "Erreur lors de la creation du compte");
     } finally {
       setLoading(false);
     }
@@ -57,125 +66,111 @@ export default function Signup() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-blue-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-xl">
+      <div className="w-full max-w-lg">
         <div className="bg-white rounded-2xl shadow-xl p-8 space-y-6">
           <div className="text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-teal-100 rounded-full mb-4">
               <Stethoscope className="w-8 h-8 text-teal-600" />
             </div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">Créer un compte</h1>
-            <p className="text-gray-600">
-              Un nouvel espace sera créé pour votre cabinet.
-            </p>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Creation de compte</h1>
+            <p className="text-gray-600">Creez votre espace professionnel</p>
           </div>
 
-          <form onSubmit={submit} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium mb-1">Prénom</label>
-                <input
-                  value={prenom}
-                  onChange={e => setPrenom(e.target.value)}
-                  required
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Nom</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Nom</label>
                 <input
                   value={nom}
-                  onChange={e => setNom(e.target.value)}
+                  onChange={(e) => setNom(e.target.value)}
                   required
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Prenom</label>
+                <input
+                  value={prenom}
+                  onChange={(e) => setPrenom(e.target.value)}
+                  required
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium mb-1">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  required
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500"
-                  placeholder="vous@domaine.com"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Mot de passe</label>
-                <input
-                  type="password"
-                  value={pwd}
-                  onChange={e => setPwd(e.target.value)}
-                  required
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500"
-                  placeholder="••••••••"
-                />
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Type de professionnel</label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className={`border rounded-lg p-3 cursor-pointer ${typeClient === "soignant" ? "ring-2 ring-teal-500" : ""}`}>
+                  <input
+                    type="radio"
+                    name="type_client"
+                    className="sr-only"
+                    checked={typeClient === "soignant"}
+                    onChange={() => setTypeClient("soignant")}
+                  />
+                  <div className="font-medium">Soignant paramedical</div>
+                  <div className="text-xs text-gray-500">
+                    Dossiers de soins, suivi des seances et personnel associe
+                  </div>
+                </label>
+                <label className={`border rounded-lg p-3 cursor-pointer ${typeClient === "medecin" ? "ring-2 ring-teal-500" : ""}`}>
+                  <input
+                    type="radio"
+                    name="type_client"
+                    className="sr-only"
+                    checked={typeClient === "medecin"}
+                    onChange={() => setTypeClient("medecin")}
+                  />
+                  <div className="font-medium">Medecin</div>
+                  <div className="text-xs text-gray-500">
+                    Dossiers medicaux, rendez-vous et personnel associe
+                  </div>
+                </label>
               </div>
             </div>
 
-            <fieldset className="space-y-2">
-              <legend className="block text-sm font-medium">Type de professionnel</legend>
-              <div className="grid grid-cols-1 gap-2">
-                <label className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer">
-                  <input
-                    type="radio"
-                    name="type_client"
-                    checked={typeClient === 'soignant'}
-                    onChange={() => setTypeClient('soignant')}
-                    className="mt-1"
-                  />
-                  <span>
-                    <span className="font-medium">Soignant paramédical</span>
-                    <span className="block text-sm text-gray-600">
-                      Gestion en temps réel des dossiers de soins, du suivi des séances et du personnel associé.
-                    </span>
-                  </span>
-                </label>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                placeholder="vous@email.com"
+              />
+            </div>
 
-                <label className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer">
-                  <input
-                    type="radio"
-                    name="type_client"
-                    checked={typeClient === 'medecin'}
-                    onChange={() => setTypeClient('medecin')}
-                    className="mt-1"
-                  />
-                  <span>
-                    <span className="font-medium">Médecin</span>
-                    <span className="block text-sm text-gray-600">
-                      Gestion des dossiers médicaux, des rendez-vous et du personnel associé.
-                    </span>
-                  </span>
-                </label>
-              </div>
-            </fieldset>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Mot de passe</label>
+              <input
+                type="password"
+                value={pwd}
+                onChange={(e) => setPwd(e.target.value)}
+                required
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                placeholder="••••••••"
+              />
+            </div>
 
-            {errMsg && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-                {errMsg}
-              </div>
-            )}
-            {okMsg && (
-              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-lg text-sm">
-                {okMsg}
-              </div>
-            )}
+            {err && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{err}</div>}
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-3 rounded-lg transition disabled:opacity-50"
+              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-3 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Création…' : 'Créer mon espace'}
+              {loading ? "Creation..." : "Creer mon compte"}
             </button>
-
-            <div className="text-center text-sm">
-              <a href="/login" className="text-teal-700 hover:underline">Déjà un compte ? Se connecter</a>
-            </div>
           </form>
+
+          <div className="text-center text-sm">
+            <span className="text-gray-600">Deja inscrit ? </span>
+            <Link to="/login" className="text-teal-700 hover:underline">
+              Se connecter
+            </Link>
+          </div>
         </div>
       </div>
     </div>
