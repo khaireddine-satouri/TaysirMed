@@ -1,8 +1,8 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { Send, Inbox, Bell, LogOut, Users, FileText, Calendar, Settings, BarChart3, CalendarRange } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
-import { useNewTicketsIndicator } from '../hooks/useNewTicketsIndicator';
+import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
+import { useNewTicketsIndicator } from '../../hooks/useNewTicketsIndicator';
 
 interface LayoutProps {
   children: ReactNode;
