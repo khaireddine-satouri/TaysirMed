@@ -1,7 +1,7 @@
 // src/components/ScheduleSeancesForDossierModal.tsx
 import { useEffect, useMemo, useState } from 'react';
-import { supabase, DossierSoin, UserBase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
+import { supabase, DossierSoin, UserBase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import { X, Clock, Calendar, Copy, Plus, Trash2 } from 'lucide-react';
 
 type Row = {
