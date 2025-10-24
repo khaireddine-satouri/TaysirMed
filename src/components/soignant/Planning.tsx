@@ -7,7 +7,7 @@ import {
   Patient,
   UserBase,
 } from "../../lib/supabase";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../../contexts/AuthContext";
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
