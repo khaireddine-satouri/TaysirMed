@@ -4,7 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Login from './components/Login';
 import Signup from './components/Signup';
 
-// ===== Soignant (V1 inchangé) =====
+// ===== Soignant (V1) =====
 import SoignantLayout from './components/layouts/SoignantLayout';
 import PatientsList from './components/soignant/PatientsList';
 import PatientDetail from './components/soignant/PatientDetail';
@@ -34,7 +34,7 @@ type View =
   | 'tickets_admin'
   | 'rdv';
 
-type ClientType = 'soignant' | 'medecin' | null;
+type ClientType = 'soignant' | 'medecin';
 
 function SpinnerFull() {
   return (
@@ -44,91 +44,175 @@ function SpinnerFull() {
   );
 }
 
+function PendingTenantScreen({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-blue-50 flex items-center justify-center p-6">
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-lg w-full space-y-4 border">
+        <h1 className="text-2xl font-bold text-gray-900">Espace en cours de création</h1>
+        <p className="text-gray-600">
+          Votre compte est connecté, mais l’espace client n’est pas encore prêt. Cliquez sur
+          <span className="font-medium"> “Réessayer”</span> pour terminer l’initialisation.
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onRetry}
+            className="px-4 py-2 rounded-lg bg-teal-600 text-white hover:bg-teal-700"
+          >
+            Réessayer
+          </button>
+          <a href="/signup" className="px-4 py-2 rounded-lg border hover:bg-gray-50">
+            Retour à l’inscription
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AppContent() {
   const { user, userBase, loading } = useAuth();
 
-  // type_client (on ne bloque PAS le rendu dessus)
-  const [clientType, setClientType] = useState<ClientType>(null);
+  // type_client (soignant/medecin)
+  const [clientType, setClientType] = useState<ClientType | null>(null);
+  const [clientLoading, setClientLoading] = useState<boolean>(true);
 
-  // navigation
+  // Vue courante
   const [currentView, setCurrentView] = useState<View>('patients');
 
-  // états V1 (soignant)
+  // Etats V1 (soignant)
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [selectedDossier, setSelectedDossier] = useState<DossierSoin | null>(null);
-  const [dashOverrideFilters, setDashOverrideFilters] =
-    useState<DashboardFilters | null>(null);
+  const [dashOverrideFilters, setDashOverrideFilters] = useState<DashboardFilters | null>(null);
 
-  const hasPickedInitialView = useRef(false);
-
-  const isAdmin = userBase?.type_utilisateur === 'admin';
-  const isAssistant = userBase?.type_utilisateur === 'assistant';
-
-  // routing minimaliste (sans react-router)
+  const hasInitializedDefaultView = useRef(false);
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
 
-  // 1) Auth strict: spinner UNIQUEMENT pendant l’auth
+  // Charger le type_client seulement si on a un client_id
+  useEffect(() => {
+    const loadClientType = async () => {
+      // pas d'utilisateur ou pas de profil -> on laisse AuthContext gérer
+      if (!user || !userBase) {
+        setClientLoading(false);
+        return;
+      }
+
+      // si pas de client_id, on ne boucle pas au spinner : on indique état "pending"
+      if (!userBase.client_id) {
+        setClientType(null);
+        setClientLoading(false);
+        return;
+      }
+
+      setClientLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('clients')
+          .select('type_client')
+          .eq('id', userBase.client_id)
+          .maybeSingle();
+
+        if (error) throw error;
+        setClientType((data?.type_client ?? null) as ClientType | null);
+      } catch (e) {
+        console.error('Erreur chargement type_client:', e);
+        setClientType(null);
+      } finally {
+        setClientLoading(false);
+      }
+    };
+
+    loadClientType();
+  }, [user, userBase]);
+
+  // Déterminer la vue par défaut quand on a toutes les infos
+  useEffect(() => {
+    if (loading) return;
+
+    // pas de user → pas de vue à initialiser
+    if (!user || !userBase) return;
+
+    // si pas de client_id, on ne choisit pas de vue: on affichera l’écran "pending"
+    if (!userBase.client_id) return;
+
+    // il faut aussi que clientType soit connu
+    if (!clientType) return;
+
+    if (!hasInitializedDefaultView.current) {
+      const isAdmin = userBase.type_utilisateur === 'admin';
+      const isAssistant = userBase.type_utilisateur === 'assistant';
+
+      let startView: View = 'patients';
+      if (clientType === 'soignant') {
+        if (isAdmin) startView = 'analyse';
+        else if (isAssistant) startView = 'effectif';
+        else startView = 'patients';
+      } else {
+        // Médecin
+        startView = 'rdv';
+      }
+
+      setCurrentView(startView);
+      hasInitializedDefaultView.current = true;
+    }
+  }, [loading, user, userBase, clientType]);
+
+  // ===== Etats non authentifiés =====
   if (loading) return <SpinnerFull />;
 
-  // 2) Non connecté: Login/Signup
   if (!user || !userBase) {
-    hasPickedInitialView.current = false;
-    if (pathname === '/signup') return <Signup />;
+    hasInitializedDefaultView.current = false;
+
+    if (pathname === '/signup') {
+      return <Signup />;
+    }
 
     return (
       <Login
         onGoSignup={() => {
-          if (typeof window !== 'undefined') window.location.href = '/signup';
+          if (typeof window !== 'undefined') {
+            window.location.href = '/signup';
+          }
         }}
       />
     );
   }
 
-  // 3) Charger type_client sans bloquer le rendu
-  useEffect(() => {
-    let ignore = false;
-    (async () => {
-      if (!userBase?.client_id) {
-        // si pas encore de client_id (bootstrap en cours), ne rien forcer
-        return;
-      }
-      const { data, error } = await supabase
-        .from('clients')
-        .select('type_client')
-        .eq('id', userBase.client_id)
-        .maybeSingle();
-      if (!ignore) {
-        if (!error && data?.type_client) {
-          setClientType(data.type_client as ClientType);
+  // ===== utilisateur connecté mais SANS client_id -> écran "pending" + bouton "Réessayer" =====
+  if (!userBase.client_id) {
+    const retry = async () => {
+      try {
+        // tente une RPC idempotente côté DB pour créer client + users_base si besoin
+        await supabase
+          .rpc('ensure_bootstrap_for_user', {
+            p_user_id: user.id,
+            p_nom: user.user_metadata?.nom ?? '',
+            p_prenom: user.user_metadata?.prenom ?? '',
+            p_type_client: null, // si null ici, la RPC doit ignorer la màj type_client
+          })
+          .catch(() => { /* ignore */ });
+
+        // recharge le profil
+        const { data, error } = await supabase
+          .from('users_base')
+          .select('*')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (!error && data) {
+          // force un refresh complet de l’app
+          if (typeof window !== 'undefined') window.location.reload();
         }
+      } catch (e) {
+        // noop: l’écran reste et l’utilisateur peut réessayer
+        console.error('Retry bootstrap error:', e);
       }
-    })();
-    return () => {
-      ignore = true;
     };
-  }, [userBase?.client_id]);
 
-  // 4) Choisir la vue de départ DÈS qu’on connaît le rôle ; si plus tard on apprend que c’est “médecin”, on bascule sur 'rdv'
-  useEffect(() => {
-    if (!userBase || hasPickedInitialView.current) return;
+    return <PendingTenantScreen onRetry={retry} />;
+  }
 
-    // choix immédiat basé sur le rôle (pour ne pas bloquer)
-    let startView: View = 'patients';
-    if (isAdmin) startView = 'analyse';
-    else if (isAssistant) startView = 'effectif';
-
-    setCurrentView(startView);
-    hasPickedInitialView.current = true;
-  }, [userBase, isAdmin, isAssistant]);
-
-  // 5) Si on apprend que c’est un client “médecin”, on bascule la vue par défaut sur RDV
-  useEffect(() => {
-    if (!hasPickedInitialView.current) return;
-    if (clientType === 'medecin') {
-      setCurrentView('rdv');
-      // on ne reset pas hasPickedInitialView: on a déjà une vue choisie
-    }
-  }, [clientType]);
+  // ===== si on a un client_id mais le type_client n’est pas encore chargé, on peut spinner brièvement =====
+  if (clientLoading || !clientType) return <SpinnerFull />;
 
   // ===== Navigation commune =====
   const handleNavigate = (view: string) => {
@@ -195,7 +279,7 @@ function AppContent() {
     setCurrentView('dashboard');
   };
 
-  // ===== Rendu Soignant (V1 inchangé) =====
+  // ===== Rendu Soignant (layout + navigation V1) =====
   const renderSoignant = () => {
     const isAdminLocal = userBase?.type_utilisateur === 'admin';
 
@@ -208,7 +292,7 @@ function AppContent() {
             onBack={handleBackToDossiers}
           />
         );
-      }
+        }
 
       if (selectedPatient) {
         return (
@@ -305,9 +389,8 @@ function AppContent() {
     );
   };
 
-  // ===== Rendu Médecin =====
+  // ===== Rendu Médecin (simple pour le moment) =====
   const renderMedecin = () => {
-    // Vue par défaut : ‘rdv’
     return (
       <MedecinLayout>
         {currentView === 'rdv' ? <RendezVousList /> : <RendezVousList />}
@@ -315,11 +398,7 @@ function AppContent() {
     );
   };
 
-  // 6) Choix du layout:
-  //    - tant qu’on ne sait pas, on affiche Soignant (expérience immédiate)
-  //    - quand clientType devient "medecin", on bascule vers Medecin
-  if (clientType === 'medecin') return renderMedecin();
-  return renderSoignant();
+  return clientType === 'soignant' ? renderSoignant() : renderMedecin();
 }
 
 export default function App() {
