@@ -39,13 +39,53 @@ type ClientType = 'soignant' | 'medecin';
 function SpinnerFull() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600"></div>
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600" />
+    </div>
+  );
+}
+
+/** Affiche une carte au lieu d’un spinner infini quand client_id n’est pas encore prêt. */
+function BootstrapGate({
+  onRetry,
+  onLogout,
+  message,
+  loading,
+}: {
+  onRetry: () => void;
+  onLogout: () => void;
+  message?: string;
+  loading?: boolean;
+}) {
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-lg bg-white border rounded-xl shadow-sm p-6">
+        <h2 className="text-lg font-semibold mb-2">Préparation de votre espace…</h2>
+        <p className="text-gray-600 mb-4">
+          {message ||
+            "Nous configurons votre espace (client & profil). Cela prend quelques secondes. Vous pouvez relancer la vérification si besoin."}
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onRetry}
+            disabled={!!loading}
+            className="px-4 py-2 rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-50"
+          >
+            {loading ? 'Vérification…' : 'Réessayer'}
+          </button>
+          <button
+            onClick={onLogout}
+            className="px-4 py-2 rounded-lg border hover:bg-gray-50"
+          >
+            Se déconnecter
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 function AppContent() {
-  const { user, userBase, loading } = useAuth();
+  const { user, userBase, loading, signOut } = useAuth();
 
   // type_client du client courant
   const [clientType, setClientType] = useState<ClientType | null>(null);
@@ -72,6 +112,7 @@ function AppContent() {
   useEffect(() => {
     const loadClientType = async () => {
       if (!userBase?.client_id) {
+        // Pas de client_id : la gate gère cet état (pas de spinner infini)
         setClientType(null);
         setClientLoading(false);
         return;
@@ -128,16 +169,56 @@ function AppContent() {
     return (
       <Login
         onGoSignup={() => {
-          // navigation simple sans router
-          if (typeof window !== 'undefined') {
-            window.location.href = '/signup';
-          }
+          if (typeof window !== 'undefined') window.location.href = '/signup';
         }}
       />
     );
   }
 
-  if (clientLoading || !clientType) return <SpinnerFull />;
+  // ===== GATE anti-blocage : user connecté mais pas encore de client_id =====
+  if (!userBase.client_id) {
+    const [busy, setBusy] = useState(false);
+    const retry = async () => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        // Appel idempotent : essaye de créer/compléter client + users_base si besoin
+        await supabase.rpc('ensure_bootstrap_for_user', {
+          p_user_id: user.id,
+          p_nom: userBase.nom || '',
+          p_prenom: userBase.prenom || '',
+          p_type_client: null, // si déjà défini côté serveur, ignoré
+        });
+
+        // Recharger users_base
+        const { data: ub } = await supabase
+          .from('users_base')
+          .select('*')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        // Force un refresh doux
+        if (ub?.client_id && typeof window !== 'undefined') {
+          window.location.reload();
+        }
+      } catch (e) {
+        console.error('Retry bootstrap error:', e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    return (
+      <BootstrapGate
+        loading={busy}
+        onRetry={retry}
+        onLogout={() => signOut().finally(() => typeof window !== 'undefined' && window.location.reload())}
+      />
+    );
+  }
+
+  // ===== Client connu mais type non encore chargé : petit spinner, pas de blocage infini global
+  if (clientLoading) return <SpinnerFull />;
 
   // ===== Navigation commune =====
   const handleNavigate = (view: string) => {
@@ -316,7 +397,6 @@ function AppContent() {
 
   // ===== Rendu Médecin =====
   const renderMedecin = () => {
-    // Vue par défaut : ‘rdv’
     return (
       <MedecinLayout>
         {currentView === 'rdv' ? <RendezVousList /> : <RendezVousList />}
@@ -326,7 +406,10 @@ function AppContent() {
 
   // Switch layout selon type_client
   if (clientType === 'soignant') return renderSoignant();
-  return renderMedecin();
+  if (clientType === 'medecin') return renderMedecin();
+
+  // Sécurité : si jamais clientType est null (cas edge), on montre une petite attente courte
+  return <SpinnerFull />;
 }
 
 export default function App() {
