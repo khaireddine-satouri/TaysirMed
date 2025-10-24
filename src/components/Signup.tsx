@@ -37,7 +37,7 @@ export default function Signup({ onSwitchToLogin }: SignupProps) {
       if (error) throw error;
       if (!data.user) throw new Error("Inscription échouée");
 
-      // Ensuite: appel RPC pour créer le client automatiquement
+      // RPC : création auto du client lié à cet admin
       const { error: rpcError } = await supabase.rpc("bootstrap_create_client_for_current_user", {
         p_nom: `Cabinet ${nom} ${prenom}`,
       });
@@ -111,17 +111,44 @@ export default function Signup({ onSwitchToLogin }: SignupProps) {
                 className="w-full px-4 py-3 border rounded-lg"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Type de professionnel</label>
-              <select
-                value={typeClient}
-                onChange={(e) => setTypeClient(e.target.value as "soignant" | "medecin")}
-                className="w-full px-4 py-3 border rounded-lg"
-              >
-                <option value="soignant">Soignant paramédical</option>
-                <option value="medecin">Médecin</option>
-              </select>
-            </div>
+
+            {/* Type de professionnel détaillé */}
+            <fieldset className="space-y-2">
+              <legend className="block text-sm font-medium">Type de professionnel</legend>
+              <div className="grid grid-cols-1 gap-2">
+                <label className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="type_client"
+                    checked={typeClient === "soignant"}
+                    onChange={() => setTypeClient("soignant")}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-medium">Soignant paramédical</span>
+                    <span className="block text-sm text-gray-600">
+                      Gestion en temps réel des dossiers de soins, du suivi des séances et du personnel associé.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="type_client"
+                    checked={typeClient === "medecin"}
+                    onChange={() => setTypeClient("medecin")}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-medium">Médecin</span>
+                    <span className="block text-sm text-gray-600">
+                      Gestion des dossiers médicaux, des rendez-vous et du personnel associé.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
 
             {error && <div className="bg-red-100 text-red-700 px-3 py-2 rounded">{error}</div>}
 
