@@ -1,16 +1,17 @@
 // src/App.tsx
 import { useEffect, useRef, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+
 import Login from './components/Login';
 import Signup from './components/Signup';
 
-// ===== Soignant (V1) =====
+// ===== Soignant (V1 inchangé, chemins déplacés) =====
 import SoignantLayout from './components/layouts/SoignantLayout';
 import PatientsList from './components/soignant/PatientsList';
 import PatientDetail from './components/soignant/PatientDetail';
 import DossierDetail from './components/soignant/DossierDetail';
 import EffectifDuJour from './components/soignant/EffectifDuJour';
-import Dashboard, { Filters as DashboardFilters } from './components/soignant/Dashboard';
+import Dashboard, { type Filters as DashboardFilters } from './components/soignant/Dashboard';
 import Settings from './components/soignant/Settings';
 import AdminAnalytics from './components/soignant/AdminAnalytics';
 import TicketsCollaborateur from './components/soignant/TicketsCollaborateur';
@@ -21,7 +22,7 @@ import Planning from './components/soignant/Planning';
 import MedecinLayout from './components/layouts/MedecinLayout';
 import RendezVousList from './components/medecin/RendezVousList';
 
-import { supabase, Patient, DossierSoin } from './lib/supabase';
+import { supabase, type Patient, type DossierSoin } from './lib/supabase';
 
 type View =
   | 'dashboard'
@@ -39,29 +40,33 @@ type ClientType = 'soignant' | 'medecin';
 function SpinnerFull() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600"></div>
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600" />
     </div>
   );
 }
 
-function PendingTenantScreen({ onRetry }: { onRetry: () => void }) {
+/** Écran fallback si l’utilisateur n’a pas encore de client associé. */
+function NoClientFallback({ onFix }: { onFix: () => Promise<void> }) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-blue-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-lg w-full space-y-4 border">
-        <h1 className="text-2xl font-bold text-gray-900">Espace en cours de création</h1>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="bg-white max-w-lg w-full rounded-xl shadow border p-6 space-y-4">
+        <h2 className="text-xl font-semibold">Espace non initialisé</h2>
         <p className="text-gray-600">
-          Votre compte est connecté, mais l’espace client n’est pas encore prêt. Cliquez sur
-          <span className="font-medium"> “Réessayer”</span> pour terminer l’initialisation.
+          Votre compte est authentifié mais aucun espace client n&apos;est encore associé.
+          Cliquez sur “Finaliser mon espace” pour terminer l’initialisation puis rechargez.
         </p>
-        <div className="flex items-center gap-3">
+        <div className="flex gap-3">
           <button
-            onClick={onRetry}
-            className="px-4 py-2 rounded-lg bg-teal-600 text-white hover:bg-teal-700"
+            onClick={onFix}
+            className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700"
           >
-            Réessayer
+            Finaliser mon espace
           </button>
-          <a href="/signup" className="px-4 py-2 rounded-lg border hover:bg-gray-50">
-            Retour à l’inscription
+          <a
+            href="/signup"
+            className="px-4 py-2 rounded-lg border hover:bg-gray-50"
+          >
+            Refaire l’inscription
           </a>
         </div>
       </div>
@@ -72,91 +77,84 @@ function PendingTenantScreen({ onRetry }: { onRetry: () => void }) {
 function AppContent() {
   const { user, userBase, loading } = useAuth();
 
-  // type_client (soignant/medecin)
+  // type_client du client courant
   const [clientType, setClientType] = useState<ClientType | null>(null);
-  const [clientLoading, setClientLoading] = useState<boolean>(true);
+  const [clientLoading, setClientLoading] = useState(false); // ⚠️ false par défaut
 
-  // Vue courante
+  const isAdmin = userBase?.type_utilisateur === 'admin';
+  const isAssistant = userBase?.type_utilisateur === 'assistant';
+
+  // navigation
   const [currentView, setCurrentView] = useState<View>('patients');
 
-  // Etats V1 (soignant)
+  // états V1 (soignant)
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [selectedDossier, setSelectedDossier] = useState<DossierSoin | null>(null);
   const [dashOverrideFilters, setDashOverrideFilters] = useState<DashboardFilters | null>(null);
 
   const hasInitializedDefaultView = useRef(false);
+
+  // routing minimaliste (sans react-router)
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
 
-  // Charger le type_client seulement si on a un client_id
+  // Charger type_client à partir de clients(client_id)
   useEffect(() => {
     const loadClientType = async () => {
-      // pas d'utilisateur ou pas de profil -> on laisse AuthContext gérer
-      if (!user || !userBase) {
-        setClientLoading(false);
-        return;
-      }
-
-      // si pas de client_id, on ne boucle pas au spinner : on indique état "pending"
-      if (!userBase.client_id) {
+      // Rien à charger si pas de userBase ou pas de client_id
+      if (!userBase?.client_id) {
         setClientType(null);
         setClientLoading(false);
         return;
       }
 
-      setClientLoading(true);
       try {
+        setClientLoading(true);
         const { data, error } = await supabase
           .from('clients')
           .select('type_client')
           .eq('id', userBase.client_id)
           .maybeSingle();
 
-        if (error) throw error;
-        setClientType((data?.type_client ?? null) as ClientType | null);
-      } catch (e) {
-        console.error('Erreur chargement type_client:', e);
-        setClientType(null);
+        if (error) {
+          console.error('Erreur chargement type_client:', error);
+          setClientType(null); // on n’active pas un spinner infini
+        } else {
+          setClientType((data?.type_client ?? null) as ClientType | null);
+        }
       } finally {
         setClientLoading(false);
       }
     };
 
     loadClientType();
-  }, [user, userBase]);
+  }, [userBase]);
 
-  // Déterminer la vue par défaut quand on a toutes les infos
+  // Vue de départ dépendant du rôle et du type_client
   useEffect(() => {
-    if (loading) return;
-
-    // pas de user → pas de vue à initialiser
+    if (loading || clientLoading) return;
     if (!user || !userBase) return;
 
-    // si pas de client_id, on ne choisit pas de vue: on affichera l’écran "pending"
-    if (!userBase.client_id) return;
-
-    // il faut aussi que clientType soit connu
-    if (!clientType) return;
-
+    // On ne bloque pas si clientType est null (cas: pas encore d’espace client)
     if (!hasInitializedDefaultView.current) {
-      const isAdmin = userBase.type_utilisateur === 'admin';
-      const isAssistant = userBase.type_utilisateur === 'assistant';
-
       let startView: View = 'patients';
+
       if (clientType === 'soignant') {
         if (isAdmin) startView = 'analyse';
         else if (isAssistant) startView = 'effectif';
         else startView = 'patients';
-      } else {
-        // Médecin
+      } else if (clientType === 'medecin') {
         startView = 'rdv';
+      } else {
+        // Pas de client : on laisse sur la vue par défaut (patients) mais on affichera le fallback
+        startView = 'patients';
       }
 
       setCurrentView(startView);
       hasInitializedDefaultView.current = true;
     }
-  }, [loading, user, userBase, clientType]);
+  }, [loading, clientLoading, user, userBase, clientType, isAdmin, isAssistant]);
 
-  // ===== Etats non authentifiés =====
+  // ===== écrans non authentifiés =====
   if (loading) return <SpinnerFull />;
 
   if (!user || !userBase) {
@@ -169,50 +167,14 @@ function AppContent() {
     return (
       <Login
         onGoSignup={() => {
-          if (typeof window !== 'undefined') {
-            window.location.href = '/signup';
-          }
+          if (typeof window !== 'undefined') window.location.href = '/signup';
         }}
       />
     );
   }
 
-  // ===== utilisateur connecté mais SANS client_id -> écran "pending" + bouton "Réessayer" =====
-  if (!userBase.client_id) {
-    const retry = async () => {
-      try {
-        // tente une RPC idempotente côté DB pour créer client + users_base si besoin
-        await supabase
-          .rpc('ensure_bootstrap_for_user', {
-            p_user_id: user.id,
-            p_nom: user.user_metadata?.nom ?? '',
-            p_prenom: user.user_metadata?.prenom ?? '',
-            p_type_client: null, // si null ici, la RPC doit ignorer la màj type_client
-          })
-          .catch(() => { /* ignore */ });
-
-        // recharge le profil
-        const { data, error } = await supabase
-          .from('users_base')
-          .select('*')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        if (!error && data) {
-          // force un refresh complet de l’app
-          if (typeof window !== 'undefined') window.location.reload();
-        }
-      } catch (e) {
-        // noop: l’écran reste et l’utilisateur peut réessayer
-        console.error('Retry bootstrap error:', e);
-      }
-    };
-
-    return <PendingTenantScreen onRetry={retry} />;
-  }
-
-  // ===== si on a un client_id mais le type_client n’est pas encore chargé, on peut spinner brièvement =====
-  if (clientLoading || !clientType) return <SpinnerFull />;
+  // ===== si on charge le client, spinner court (vrai chargement) =====
+  if (clientLoading) return <SpinnerFull />;
 
   // ===== Navigation commune =====
   const handleNavigate = (view: string) => {
@@ -279,7 +241,7 @@ function AppContent() {
     setCurrentView('dashboard');
   };
 
-  // ===== Rendu Soignant (layout + navigation V1) =====
+  // ===== Rendu Soignant (V1 inchangé) =====
   const renderSoignant = () => {
     const isAdminLocal = userBase?.type_utilisateur === 'admin';
 
@@ -292,7 +254,7 @@ function AppContent() {
             onBack={handleBackToDossiers}
           />
         );
-        }
+      }
 
       if (selectedPatient) {
         return (
@@ -351,28 +313,18 @@ function AppContent() {
           );
 
         case 'settings':
-          return isAdminLocal ? (
-            <Settings />
-          ) : (
-            <PatientsList onSelectPatient={handleSelectPatient} />
-          );
+          return isAdminLocal ? <Settings /> : <PatientsList onSelectPatient={handleSelectPatient} />;
 
         case 'tickets_collab':
           return userBase?.type_utilisateur !== 'admin' ? (
-            <TicketsCollaborateur
-              onOpenPatient={openPatientById}
-              onOpenDossier={openDossierById}
-            />
+            <TicketsCollaborateur onOpenPatient={openPatientById} onOpenDossier={openDossierById} />
           ) : (
             <PatientsList onSelectPatient={handleSelectPatient} />
           );
 
         case 'tickets_admin':
           return isAdminLocal ? (
-            <TicketsAdmin
-              onOpenPatient={openPatientById}
-              onOpenDossier={openDossierById}
-            />
+            <TicketsAdmin onOpenPatient={openPatientById} onOpenDossier={openDossierById} />
           ) : (
             <PatientsList onSelectPatient={handleSelectPatient} />
           );
@@ -389,7 +341,7 @@ function AppContent() {
     );
   };
 
-  // ===== Rendu Médecin (simple pour le moment) =====
+  // ===== Rendu Médecin =====
   const renderMedecin = () => {
     return (
       <MedecinLayout>
@@ -398,7 +350,38 @@ function AppContent() {
     );
   };
 
-  return clientType === 'soignant' ? renderSoignant() : renderMedecin();
+  // ===== Cas “pas encore de client” → fallback au lieu de spinner infini =====
+  if (!userBase.client_id) {
+    const fix = async () => {
+      // Essaie d’idempotence : s’assure qu’un client + users_base existent
+      try {
+        // Adapte si tu as renommé cette RPC
+        await supabase.rpc('ensure_bootstrap_for_user', {
+          p_user_id: user?.id,
+          p_nom: user?.user_metadata?.nom ?? '',
+          p_prenom: user?.user_metadata?.prenom ?? '',
+          p_type_client: null
+        });
+        // puis reload
+        window.location.reload();
+      } catch (e) {
+        console.error('ensure_bootstrap_for_user error', e);
+        alert('Impossible de finaliser automatiquement. Passe par /signup ou réessaie.');
+      }
+    };
+    return <NoClientFallback onFix={fix} />;
+  }
+
+  // ===== Switch layout selon type_client (si on l’a) =====
+  if (clientType === 'soignant') return renderSoignant();
+  if (clientType === 'medecin') return renderMedecin();
+
+  // Si client_id existe mais pas de type_client lisible → afficher quelque chose d’exploitable
+  return (
+    <SoignantLayout currentView={currentView} onNavigate={handleNavigate}>
+      <PatientsList onSelectPatient={(p) => setSelectedPatient(p)} />
+    </SoignantLayout>
+  );
 }
 
 export default function App() {
