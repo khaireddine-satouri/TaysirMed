@@ -130,7 +130,7 @@ export default function SoignantLayout({ children, currentView, onNavigate }: La
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <h1 className="text-xl font-bold text-teal-600">
-              {clientName ? `Cabinet ${clientName}` : "Cabinet"}
+              {clientName ? `${clientName}` : "Cabinet"}
             </h1>
 
             <div className="flex items-center gap-3">
