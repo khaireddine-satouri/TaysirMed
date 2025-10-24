@@ -1,34 +1,23 @@
 // src/components/Signup.tsx
 import { useState } from 'react';
 import { Stethoscope } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-
-type ClientType = 'soignant' | 'medecin';
+import { supabase, ClientType } from '../lib/supabase';
 
 export default function Signup() {
   const [nom, setNom] = useState('');
   const [prenom, setPrenom] = useState('');
   const [email, setEmail] = useState('');
   const [pwd, setPwd] = useState('');
-  const [showPwd, setShowPwd] = useState(false);
   const [typeClient, setTypeClient] = useState<ClientType>('soignant');
 
   const [loading, setLoading] = useState(false);
   const [okMsg, setOkMsg] = useState('');
   const [errMsg, setErrMsg] = useState('');
 
-  const canSubmit =
-    !loading &&
-    email.trim().length > 3 &&
-    pwd.trim().length >= 8 &&
-    (nom.trim().length > 0 || prenom.trim().length > 0);
-
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrMsg('');
     setOkMsg('');
-    if (!canSubmit) return;
-
     setLoading(true);
     try {
       const { data, error } = await supabase.auth.signUp({
@@ -38,29 +27,29 @@ export default function Signup() {
           data: {
             nom,
             prenom,
-            type_client: typeClient, // ⬅️ le trigger s’en sert
+            type_client: typeClient, // ⬅️ le trigger lira ça
           },
-          // emailRedirectTo: `${window.location.origin}/` // si tu veux un redirect après validation email
+          // NOTE: si email confirmation activée dans Supabase Auth,
+          // il n'y aura pas de session à la création.
         },
       });
+
       if (error) throw error;
 
-      if (!data.user) {
-        // mode "email confirmation" → pas de session tout de suite
+      // Le trigger va créer clients + users_base(admin) automatiquement.
+      // Si la confirmation email est activée, on prévient l'utilisateur.
+      const needsEmailConfirmation = !data.session;
+      if (needsEmailConfirmation) {
         setOkMsg(
           "Compte créé. Veuillez confirmer votre adresse e-mail, puis connectez-vous."
         );
       } else {
-        // si "email auto-confirm" est activé, l'utilisateur est authentifié
-        setOkMsg('Compte créé avec succès. Redirection…');
-        setTimeout(() => window.location.replace('/'), 600);
+        setOkMsg("Compte créé avec succès. Redirection…");
+        setTimeout(() => window.location.replace('/'), 800);
       }
     } catch (err: any) {
       console.error(err);
-      setErrMsg(
-        err?.message ??
-          "Une erreur est survenue lors de la création de l'espace"
-      );
+      setErrMsg(err?.message ?? 'Erreur lors de la création du compte');
     } finally {
       setLoading(false);
     }
@@ -86,7 +75,7 @@ export default function Signup() {
                 <label className="block text-sm font-medium mb-1">Prénom</label>
                 <input
                   value={prenom}
-                  onChange={(e) => setPrenom(e.target.value)}
+                  onChange={e => setPrenom(e.target.value)}
                   required
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500"
                 />
@@ -95,7 +84,7 @@ export default function Signup() {
                 <label className="block text-sm font-medium mb-1">Nom</label>
                 <input
                   value={nom}
-                  onChange={(e) => setNom(e.target.value)}
+                  onChange={e => setNom(e.target.value)}
                   required
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500"
                 />
@@ -108,35 +97,22 @@ export default function Signup() {
                 <input
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={e => setEmail(e.target.value)}
                   required
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500"
                   placeholder="vous@domaine.com"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">
-                  Mot de passe <span className="text-xs text-gray-500">(min. 8)</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPwd ? 'text' : 'password'}
-                    value={pwd}
-                    onChange={(e) => setPwd(e.target.value)}
-                    required
-                    minLength={8}
-                    className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500 pr-20"
-                    placeholder="••••••••"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPwd((s) => !s)}
-                    className="absolute inset-y-0 right-0 px-3 text-sm text-gray-600 hover:text-gray-900"
-                    aria-label={showPwd ? 'Masquer' : 'Afficher'}
-                  >
-                    {showPwd ? 'Masquer' : 'Afficher'}
-                  </button>
-                </div>
+                <label className="block text-sm font-medium mb-1">Mot de passe</label>
+                <input
+                  type="password"
+                  value={pwd}
+                  onChange={e => setPwd(e.target.value)}
+                  required
+                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500"
+                  placeholder="••••••••"
+                />
               </div>
             </div>
 
@@ -154,7 +130,7 @@ export default function Signup() {
                   <span>
                     <span className="font-medium">Soignant paramédical</span>
                     <span className="block text-sm text-gray-600">
-                      Gestion des dossiers de soins, suivi des séances, personnel associé.
+                      Gestion en temps réel des dossiers de soins, du suivi des séances et du personnel associé.
                     </span>
                   </span>
                 </label>
@@ -170,7 +146,7 @@ export default function Signup() {
                   <span>
                     <span className="font-medium">Médecin</span>
                     <span className="block text-sm text-gray-600">
-                      Dossiers médicaux, rendez-vous et personnel associé.
+                      Gestion des dossiers médicaux, des rendez-vous et du personnel associé.
                     </span>
                   </span>
                 </label>
@@ -190,8 +166,8 @@ export default function Signup() {
 
             <button
               type="submit"
-              disabled={!canSubmit}
-              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-3 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={loading}
+              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-3 rounded-lg transition disabled:opacity-50"
             >
               {loading ? 'Création…' : 'Créer mon espace'}
             </button>
