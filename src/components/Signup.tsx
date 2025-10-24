@@ -1,3 +1,4 @@
+// src/components/Signup.tsx
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
 import { Stethoscope } from "lucide-react";
@@ -44,11 +45,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
       if (rpcError) throw rpcError;
 
       // Message discret de succès
-      setSuccess("Compte créé avec succès. Vous pouvez maintenant vous connecter.");
-      // Bascule automatique après 1s
-      setTimeout(() => {
-        onSwitchToLogin();
-      }, 1000);
+      setSuccess("Compte créé avec succès. Veuillez vérifier votre boîte mail pour valider votre inscription.");
     } catch (err: any) {
       console.error("Erreur signup:", err);
       setError(err.message || "Erreur lors de la création du compte.");
@@ -74,11 +71,10 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Nom */}
             <div>
-              <label htmlFor="nom" className="block text-sm font-medium text-gray-700 mb-2">
-                Nom
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Nom <span className="text-red-500">*</span>
               </label>
               <input
-                id="nom"
                 type="text"
                 value={nom}
                 onChange={(e) => setNom(e.target.value)}
@@ -89,11 +85,10 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
 
             {/* Prénom */}
             <div>
-              <label htmlFor="prenom" className="block text-sm font-medium text-gray-700 mb-2">
-                Prénom
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Prénom <span className="text-red-500">*</span>
               </label>
               <input
-                id="prenom"
                 type="text"
                 value={prenom}
                 onChange={(e) => setPrenom(e.target.value)}
@@ -104,11 +99,10 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
 
             {/* Email */}
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                Email
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Email <span className="text-red-500">*</span>
               </label>
               <input
-                id="email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -119,11 +113,10 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
 
             {/* Mot de passe */}
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                Mot de passe
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Mot de passe <span className="text-red-500">*</span>
               </label>
               <input
-                id="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -134,7 +127,9 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
 
             {/* Type de professionnel */}
             <fieldset className="space-y-2">
-              <legend className="block text-sm font-medium">Type de professionnel</legend>
+              <legend className="block text-sm font-medium">
+                Type de professionnel <span className="text-red-500">*</span>
+              </legend>
               <div className="grid grid-cols-1 gap-2">
                 <label className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer">
                   <input
@@ -147,7 +142,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
                   <span>
                     <span className="font-medium">Soignant paramédical</span>
                     <span className="block text-sm text-gray-600">
-                      Gestion des dossiers de soins, des séances et du personnel associé.
+                      Gestion en temps réel des dossiers de soins, du suivi des séances et du personnel associé.
                     </span>
                   </span>
                 </label>
