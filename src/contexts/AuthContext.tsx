@@ -1,129 +1,122 @@
 // src/contexts/AuthContext.tsx
-import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
-import { User } from '@supabase/supabase-js';
-import { supabase, UserBase } from '../lib/supabase';
+import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { Session, User } from "@supabase/supabase-js";
+import { supabase, UserBase } from "../lib/supabase";
 
-interface AuthContextType {
+type TypeClient = "soignant" | "medecin";
+type TypeUtilisateur = "admin" | "assistant" | "secretaire";
+
+type Profile = UserBase;
+
+type AuthContextType = {
+  session: Session | null;
   user: User | null;
-  userBase: UserBase | null;
+  profile: Profile | null;
   loading: boolean;
-  lastBusinessError: string | null; // ex: 'INACTIVE_CLIENT'
+  isAdmin: boolean;
+  isSoignant: boolean;
+  isMedecin: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
-}
+};
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext = createContext<AuthContextType>({
+  session: null,
+  user: null,
+  profile: null,
+  loading: true,
+  isAdmin: false,
+  isSoignant: false,
+  isMedecin: false,
+  signIn: async () => {},
+  signOut: async () => {},
+});
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [userBase, setUserBase] = useState<UserBase | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [lastBusinessError, setLastBusinessError] = useState<string | null>(null);
-  const mountedRef = useRef(true);
 
   useEffect(() => {
-    mountedRef.current = true;
+    const init = async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session ?? null);
+      if (data.session?.user) {
+        await loadProfile(data.session.user.id);
+      }
+      setLoading(false);
+    };
+    init();
 
-    // 1) S'abonner aux changements d'auth (connexion / déconnexion / refresh)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mountedRef.current) return;
-      setUser(session?.user ?? null);
-
-      if (session?.user) {
-        await loadUserBase(session.user.id);
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
+      setSession(sess);
+      if (!sess?.user) {
+        setProfile(null);
       } else {
-        setUserBase(null);
-        setLastBusinessError(null);
-        setLoading(false); // 👈 ne jamais bloquer l'UI
+        loadProfile(sess.user.id);
       }
     });
-
-    // 2) Session initiale (ne JAMAIS bloquer si erreur)
-    (async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!mountedRef.current) return;
-
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await loadUserBase(session.user.id);
-        }
-      } catch (e) {
-        console.error('[auth.getSession] failed:', e);
-        // En cas de refresh token invalide : on laisse l’UI afficher Login.
-      } finally {
-        if (mountedRef.current) setLoading(false);
-      }
-    })();
-
-    return () => {
-      mountedRef.current = false;
-      subscription.unsubscribe();
-    };
+    return () => sub.subscription.unsubscribe();
   }, []);
 
-  const loadUserBase = async (userId: string) => {
-    // Note: on évite un "loading" global prolongé ici pour garder l’UI réactive.
-    setLastBusinessError(null);
-    try {
-      // 1) Lire users_base
-      const { data: ub, error: ubErr } = await supabase
-        .from('users_base')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-      if (ubErr) throw ubErr;
-      setUserBase(ub ?? null);
-
-      // 2) Vérifier le client actif UNIQUEMENT si admin (RLS restreint pour assistants)
-      if (ub?.client_id && ub?.type_utilisateur === 'admin') {
-        const { data: cli, error: cliErr } = await supabase
-          .from('clients')
-          .select('statut')
-          .eq('id', ub.client_id)
-          .maybeSingle();
-        if (cliErr) throw cliErr;
-
-        if (cli?.statut === 'inactif') {
-          setLastBusinessError('INACTIVE_CLIENT');
-          await supabase.auth.signOut();
-          setUserBase(null);
-        }
-      }
-    } catch (error) {
-      console.error('Erreur chargement profil utilisateur:', error);
-      // On ne bloque pas l’UI : pas de setLoading(true) ici.
-    }
+  const loadProfile = async (uid: string) => {
+    const { data } = await supabase
+      .from("users_base")
+      .select("id, nom, prenom, type_utilisateur, type_client, client_id, created_at, updated_at")
+      .eq("id", uid)
+      .maybeSingle();
+    setProfile((data as Profile) ?? null);
   };
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
-    // onAuthStateChange => loadUserBase
-  };
 
-  const signOut = async () => {
-    try {
-      await supabase.auth.signOut({ scope: 'global' });
-    } finally {
-      setLastBusinessError(null);
-      setUserBase(null);
-      setUser(null);
-      // Pas de reload ici : laisse App décider (ou ajoute un redirect si tu veux).
+    // Vérifier si le client est actif
+    if (data.user) {
+      const { data: ub } = await supabase
+        .from("users_base")
+        .select("client_id")
+        .eq("id", data.user.id)
+        .maybeSingle();
+
+      if (ub?.client_id) {
+        const { data: client } = await supabase
+          .from("clients")
+          .select("statut")
+          .eq("id", ub.client_id)
+          .maybeSingle();
+        if (client?.statut === "inactif") {
+          await supabase.auth.signOut();
+          const err = new Error("INACTIVE_CLIENT");
+          (err as any).code = "INACTIVE_CLIENT";
+          throw err;
+        }
+      }
     }
   };
 
-  return (
-    <AuthContext.Provider value={{ user, userBase, loading, lastBusinessError, signIn, signOut }}>
-      {children}
-    </AuthContext.Provider>
+  const signOut = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+  };
+
+  const value: AuthContextType = useMemo(
+    () => ({
+      session,
+      user: session?.user ?? null,
+      profile,
+      loading,
+      isAdmin: profile?.type_utilisateur === "admin",
+      isSoignant: profile?.type_client === "soignant",
+      isMedecin: profile?.type_client === "medecin",
+      signIn,
+      signOut,
+    }),
+    [session, profile, loading]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-}
+export const useAuth = () => useContext(AuthContext);
