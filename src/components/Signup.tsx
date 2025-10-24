@@ -1,7 +1,9 @@
 // src/components/Signup.tsx
 import { useState } from 'react';
 import { Stethoscope } from 'lucide-react';
-import { ClientType, signUpAndBootstrapTenant } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
+
+type ClientType = 'soignant' | 'medecin';
 
 export default function Signup() {
   const [nom, setNom] = useState('');
@@ -29,21 +31,28 @@ export default function Signup() {
 
     setLoading(true);
     try {
-      const res = await signUpAndBootstrapTenant({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password: pwd,
-        nom,
-        prenom,
-        type_client: typeClient,
+        options: {
+          data: {
+            nom,
+            prenom,
+            type_client: typeClient, // ⬅️ le trigger s’en sert
+          },
+          // emailRedirectTo: `${window.location.origin}/` // si tu veux un redirect après validation email
+        },
       });
+      if (error) throw error;
 
-      if (res.needsEmailConfirmation) {
+      if (!data.user) {
+        // mode "email confirmation" → pas de session tout de suite
         setOkMsg(
           "Compte créé. Veuillez confirmer votre adresse e-mail, puis connectez-vous."
         );
       } else {
+        // si "email auto-confirm" est activé, l'utilisateur est authentifié
         setOkMsg('Compte créé avec succès. Redirection…');
-        // on laisse l’auth listener te recharger l’app ou on force un reload
         setTimeout(() => window.location.replace('/'), 600);
       }
     } catch (err: any) {
@@ -61,20 +70,17 @@ export default function Signup() {
     <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-blue-50 flex items-center justify-center p-4">
       <div className="w-full max-w-xl">
         <div className="bg-white rounded-2xl shadow-xl p-8 space-y-6">
-          {/* Header */}
           <div className="text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-teal-100 rounded-full mb-4">
               <Stethoscope className="w-8 h-8 text-teal-600" />
             </div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Créer un compte</h1>
             <p className="text-gray-600">
-              Un nouvel espace (client) sera créé pour votre cabinet.
+              Un nouvel espace sera créé pour votre cabinet.
             </p>
           </div>
 
-          {/* Form */}
           <form onSubmit={submit} className="space-y-4">
-            {/* Nom & prénom */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium mb-1">Prénom</label>
@@ -83,7 +89,6 @@ export default function Signup() {
                   onChange={(e) => setPrenom(e.target.value)}
                   required
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500"
-                  placeholder="Ex: Radhouan"
                 />
               </div>
               <div>
@@ -93,12 +98,10 @@ export default function Signup() {
                   onChange={(e) => setNom(e.target.value)}
                   required
                   className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-teal-500"
-                  placeholder="Ex: Ayadi"
                 />
               </div>
             </div>
 
-            {/* Email & password */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium mb-1">Email</label>
@@ -113,8 +116,7 @@ export default function Signup() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  Mot de passe
-                  <span className="text-xs text-gray-500"> (min. 8 caractères)</span>
+                  Mot de passe <span className="text-xs text-gray-500">(min. 8)</span>
                 </label>
                 <div className="relative">
                   <input
@@ -131,7 +133,6 @@ export default function Signup() {
                     onClick={() => setShowPwd((s) => !s)}
                     className="absolute inset-y-0 right-0 px-3 text-sm text-gray-600 hover:text-gray-900"
                     aria-label={showPwd ? 'Masquer' : 'Afficher'}
-                    title={showPwd ? 'Masquer' : 'Afficher'}
                   >
                     {showPwd ? 'Masquer' : 'Afficher'}
                   </button>
@@ -139,7 +140,6 @@ export default function Signup() {
               </div>
             </div>
 
-            {/* Type de professionnel */}
             <fieldset className="space-y-2">
               <legend className="block text-sm font-medium">Type de professionnel</legend>
               <div className="grid grid-cols-1 gap-2">
@@ -154,7 +154,7 @@ export default function Signup() {
                   <span>
                     <span className="font-medium">Soignant paramédical</span>
                     <span className="block text-sm text-gray-600">
-                      Gestion en temps réel des dossiers de soins, du suivi des séances et du personnel associé.
+                      Gestion des dossiers de soins, suivi des séances, personnel associé.
                     </span>
                   </span>
                 </label>
@@ -170,14 +170,13 @@ export default function Signup() {
                   <span>
                     <span className="font-medium">Médecin</span>
                     <span className="block text-sm text-gray-600">
-                      Gestion en temps réel des dossiers médicaux, des rendez-vous et du personnel associé.
+                      Dossiers médicaux, rendez-vous et personnel associé.
                     </span>
                   </span>
                 </label>
               </div>
             </fieldset>
 
-            {/* Alerts */}
             {errMsg && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
                 {errMsg}
@@ -189,7 +188,6 @@ export default function Signup() {
               </div>
             )}
 
-            {/* Submit */}
             <button
               type="submit"
               disabled={!canSubmit}
@@ -199,9 +197,7 @@ export default function Signup() {
             </button>
 
             <div className="text-center text-sm">
-              <a href="/login" className="text-teal-700 hover:underline">
-                Déjà un compte ? Se connecter
-              </a>
+              <a href="/login" className="text-teal-700 hover:underline">Déjà un compte ? Se connecter</a>
             </div>
           </form>
         </div>
