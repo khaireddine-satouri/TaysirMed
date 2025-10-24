@@ -1,8 +1,8 @@
 // src/components/EditScheduledSeanceModal.tsx
 import { useEffect, useMemo, useState } from "react";
-import { supabase, Seance, UserBase } from "../lib/supabase";
+import { supabase, Seance, UserBase } from "../../lib/supabase";
 import { X, Trash2, AlertTriangle } from "lucide-react";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../../contexts/AuthContext";
 
 /* ----------------- Helpers ----------------- */
 function nowInTZ(tz: string) {
