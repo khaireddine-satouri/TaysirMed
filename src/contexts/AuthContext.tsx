@@ -1,17 +1,12 @@
 // src/contexts/AuthContext.tsx
 import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
-import { Session, User } from "@supabase/supabase-js";
-import { supabase, UserBase } from "../lib/supabase";
-
-type TypeClient = "soignant" | "medecin";
-type TypeUtilisateur = "admin" | "assistant" | "secretaire";
-
-type Profile = UserBase;
+import type { Session, User } from "@supabase/supabase-js";
+import { supabase, type UserBase } from "../lib/supabase";
 
 type AuthContextType = {
   session: Session | null;
   user: User | null;
-  profile: Profile | null;
+  userBase: UserBase | null;
   loading: boolean;
   isAdmin: boolean;
   isSoignant: boolean;
@@ -23,7 +18,7 @@ type AuthContextType = {
 const AuthContext = createContext<AuthContextType>({
   session: null,
   user: null,
-  profile: null,
+  userBase: null,
   loading: true,
   isAdmin: false,
   isSoignant: false,
@@ -34,7 +29,7 @@ const AuthContext = createContext<AuthContextType>({
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [userBase, setUserBase] = useState<UserBase | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -42,7 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data } = await supabase.auth.getSession();
       setSession(data.session ?? null);
       if (data.session?.user) {
-        await loadProfile(data.session.user.id);
+        await loadUserBase(data.session.user.id);
       }
       setLoading(false);
     };
@@ -51,21 +46,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
       setSession(sess);
       if (!sess?.user) {
-        setProfile(null);
+        setUserBase(null);
       } else {
-        loadProfile(sess.user.id);
+        loadUserBase(sess.user.id);
       }
     });
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  const loadProfile = async (uid: string) => {
+  const loadUserBase = async (uid: string) => {
     const { data } = await supabase
       .from("users_base")
       .select("id, nom, prenom, type_utilisateur, type_client, client_id, created_at, updated_at")
       .eq("id", uid)
       .maybeSingle();
-    setProfile((data as Profile) ?? null);
+
+    setUserBase((data as UserBase) ?? null);
   };
 
   const signIn = async (email: string, password: string) => {
@@ -86,6 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .select("statut")
           .eq("id", ub.client_id)
           .maybeSingle();
+
         if (client?.statut === "inactif") {
           await supabase.auth.signOut();
           const err = new Error("INACTIVE_CLIENT");
@@ -105,15 +102,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       session,
       user: session?.user ?? null,
-      profile,
+      userBase,
       loading,
-      isAdmin: profile?.type_utilisateur === "admin",
-      isSoignant: profile?.type_client === "soignant",
-      isMedecin: profile?.type_client === "medecin",
+      isAdmin: userBase?.type_utilisateur === "admin",
+      isSoignant: userBase?.type_client === "soignant",
+      isMedecin: userBase?.type_client === "medecin",
       signIn,
       signOut,
     }),
-    [session, profile, loading]
+    [session, userBase, loading]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
