@@ -1,7 +1,7 @@
 // DossierDetail.tsx
 import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { supabase, DossierSoin, Seance, Patient, UserBase } from '../lib/supabase';
+import { supabase, DossierSoin, Seance, Patient, UserBase } from '../../lib/supabase';
 import {
   ArrowLeft,
   Calendar,
