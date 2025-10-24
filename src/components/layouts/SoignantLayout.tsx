@@ -23,10 +23,10 @@ interface LayoutProps {
 }
 
 export default function SoignantLayout({ children, currentView, onNavigate }: LayoutProps) {
-  const { profile, isAdmin, signOut } = useAuth();
+  const { userBase, isAdmin, signOut } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
 
-  const clientId = profile?.client_id ?? null;
+  const clientId = userBase?.client_id ?? null;
 
   const [clientName, setClientName] = useState<string>("");
   const [hasAssistants, setHasAssistants] = useState<boolean | null>(null);
@@ -153,9 +153,9 @@ export default function SoignantLayout({ children, currentView, onNavigate }: La
 
               <div className="text-right">
                 <p className="text-sm font-medium text-gray-900">
-                  {profile?.prenom} {profile?.nom}
+                  {userBase?.prenom} {userBase?.nom}
                 </p>
-                <p className="text-xs text-gray-500 capitalize">{profile?.type_utilisateur}</p>
+                <p className="text-xs text-gray-500 capitalize">{userBase?.type_utilisateur}</p>
               </div>
 
               <button
