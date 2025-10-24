@@ -23,6 +23,9 @@ import RendezVousList from './components/medecin/RendezVousList';
 
 import { supabase, Patient, DossierSoin } from './lib/supabase';
 
+const LOAD_TIMEOUT_MS = 12_000;   // après 12s: déconnexion + redirection login
+const WARNING_AFTER_MS = 6_000;   // après 6s: petit bandeau d’avertissement
+
 type View =
   | 'dashboard'
   | 'analyse'
@@ -32,7 +35,7 @@ type View =
   | 'settings'
   | 'tickets_collab'
   | 'tickets_admin'
-  | 'rdv'; // vue par défaut pour le médecin
+  | 'rdv';
 
 type ClientType = 'soignant' | 'medecin';
 
@@ -44,7 +47,7 @@ function SpinnerFull() {
   );
 }
 
-/** Affiche une carte au lieu d’un spinner infini quand client_id n’est pas encore prêt. */
+/** Carte anti-blocage quand user connecté mais client_id pas encore prêt */
 function BootstrapGate({
   onRetry,
   onLogout,
@@ -87,9 +90,17 @@ function BootstrapGate({
 function AppContent() {
   const { user, userBase, loading, signOut } = useAuth();
 
-  // type_client du client courant
+  // Type du client (soignant | medecin)
   const [clientType, setClientType] = useState<ClientType | null>(null);
   const [clientLoading, setClientLoading] = useState(true);
+
+  // Gate “busy” (quand client_id manque)
+  const [gateBusy, setGateBusy] = useState(false);
+
+  // Watchdog (avertissement + auto redirect)
+  const [tookTooLong, setTookTooLong] = useState(false);
+  const timeoutRef = useRef<number | null>(null);
+  const warnRef = useRef<number | null>(null);
 
   const isAdmin = userBase?.type_utilisateur === 'admin';
   const isAssistant = userBase?.type_utilisateur === 'assistant';
@@ -108,11 +119,50 @@ function AppContent() {
   // routing minimaliste (sans react-router)
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
 
-  // Charger type_client à partir de clients(client_id)
+  // ===== Watchdog: si “loading” (auth) OU “clientLoading” dure trop, on force retour login
+  useEffect(() => {
+    const skip = pathname === '/signup';
+
+    const clearTimers = () => {
+      if (timeoutRef.current) {
+        window.clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      if (warnRef.current) {
+        window.clearTimeout(warnRef.current);
+        warnRef.current = null;
+      }
+      setTookTooLong(false);
+    };
+
+    if (!skip && (loading || clientLoading)) {
+      warnRef.current = window.setTimeout(
+        () => setTookTooLong(true),
+        WARNING_AFTER_MS
+      ) as unknown as number;
+
+      timeoutRef.current = window.setTimeout(async () => {
+        try {
+          await signOut();
+        } catch {
+          // noop
+        } finally {
+          if (typeof window !== 'undefined') {
+            window.location.replace('/login');
+          }
+        }
+      }, LOAD_TIMEOUT_MS) as unknown as number;
+    } else {
+      clearTimers();
+    }
+
+    return clearTimers;
+  }, [loading, clientLoading, pathname, signOut]);
+
+  // Charger type_client depuis la table clients
   useEffect(() => {
     const loadClientType = async () => {
       if (!userBase?.client_id) {
-        // Pas de client_id : la gate gère cet état (pas de spinner infini)
         setClientType(null);
         setClientLoading(false);
         return;
@@ -136,7 +186,7 @@ function AppContent() {
     if (userBase) loadClientType();
   }, [userBase]);
 
-  // Vue de départ dépendant du rôle et du type_client
+  // Vue de départ (en fonction rôle & type_client)
   useEffect(() => {
     if (loading || clientLoading) return;
     if (!user || !userBase || !clientType) return;
@@ -148,7 +198,6 @@ function AppContent() {
         else if (isAssistant) startView = 'effectif';
         else startView = 'patients';
       } else {
-        // Médecin
         startView = 'rdv';
       }
       setCurrentView(startView);
@@ -157,7 +206,24 @@ function AppContent() {
   }, [loading, clientLoading, user, userBase, clientType, isAdmin, isAssistant]);
 
   // ===== écrans non authentifiés =====
-  if (loading) return <SpinnerFull />;
+  if (loading) {
+    return (
+      <div className="relative">
+        <SpinnerFull />
+        {tookTooLong && (
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2 rounded-lg shadow">
+            La connexion prend plus de temps que prévu…{' '}
+            <button
+              onClick={() => (typeof window !== 'undefined' ? window.location.replace('/login') : null)}
+              className="underline ml-1"
+            >
+              revenir au login
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (!user || !userBase) {
     hasInitializedDefaultView.current = false;
@@ -175,60 +241,65 @@ function AppContent() {
     );
   }
 
-  // ===== GATE anti-blocage : user connecté mais pas encore de client_id =====
+  // ===== User connecté mais pas de client_id -> Gate (pas de hooks conditionnels : state défini plus haut)
   if (!userBase.client_id) {
-    const [busy, setBusy] = useState(false);
     const retry = async () => {
-      if (busy) return;
-      setBusy(true);
+      if (gateBusy) return;
+      setGateBusy(true);
       try {
-        // Appel idempotent : essaye de créer/compléter client + users_base si besoin
-        await supabase.rpc('ensure_bootstrap_for_user', {
-          p_user_id: user.id,
-          p_nom: userBase.nom || '',
-          p_prenom: userBase.prenom || '',
-          p_type_client: null, // si déjà défini côté serveur, ignoré
-        });
-
-        // Recharger users_base
+        // Stratégie simple: on re-tente un refresh “doux” (au besoin, appeler une RPC idempotente)
         const { data: ub } = await supabase
           .from('users_base')
           .select('*')
           .eq('id', user.id)
           .maybeSingle();
 
-        // Force un refresh doux
         if (ub?.client_id && typeof window !== 'undefined') {
           window.location.reload();
+        } else {
+          // fallback: simple reload
+          if (typeof window !== 'undefined') window.location.reload();
         }
       } catch (e) {
         console.error('Retry bootstrap error:', e);
       } finally {
-        setBusy(false);
+        setGateBusy(false);
       }
     };
 
-    return (
-      <BootstrapGate
-        loading={busy}
-        onRetry={retry}
-        onLogout={() => signOut().finally(() => typeof window !== 'undefined' && window.location.reload())}
-      />
-    );
+    const logout = () =>
+      signOut().finally(() => {
+        if (typeof window !== 'undefined') window.location.replace('/login');
+      });
+
+    return <BootstrapGate loading={gateBusy} onRetry={retry} onLogout={logout} />;
   }
 
-  // ===== Client connu mais type non encore chargé : petit spinner, pas de blocage infini global
-  if (clientLoading) return <SpinnerFull />;
-  if (!clientType) {
-  return (
-    <NoTenantScreen
-      onRefresh={() => window.location.reload()}
-      onSignOut={async () => {
-        try { await supabase.auth.signOut(); } finally { window.location.reload(); }
-      }}
-    />
-  );
-}
+  // ===== Client connu mais type non encore chargé : petit spinner + avertissement possible
+  if (clientLoading) {
+    return (
+      <div className="relative">
+        <SpinnerFull />
+        {tookTooLong && (
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2 rounded-lg shadow">
+            Initialisation de l’espace en cours…
+            <button
+              onClick={async () => {
+                try {
+                  await signOut();
+                } finally {
+                  if (typeof window !== 'undefined') window.location.replace('/login');
+                }
+              }}
+              className="underline ml-1"
+            >
+              revenir au login
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // ===== Navigation commune =====
   const handleNavigate = (view: string) => {
@@ -418,7 +489,7 @@ function AppContent() {
   if (clientType === 'soignant') return renderSoignant();
   if (clientType === 'medecin') return renderMedecin();
 
-  // Sécurité : si jamais clientType est null (cas edge), on montre une petite attente courte
+  // Sécurité: cas edge
   return <SpinnerFull />;
 }
 
