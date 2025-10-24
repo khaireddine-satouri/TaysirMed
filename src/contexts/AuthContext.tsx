@@ -1,5 +1,5 @@
 // src/contexts/AuthContext.tsx
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase, UserBase } from '../lib/supabase';
 
@@ -19,32 +19,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userBase, setUserBase] = useState<UserBase | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastBusinessError, setLastBusinessError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        await loadUserBase(session.user.id);
-      }
-      setLoading(false);
-    });
+    mountedRef.current = true;
 
+    // 1) S'abonner aux changements d'auth (connexion / déconnexion / refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mountedRef.current) return;
       setUser(session?.user ?? null);
+
       if (session?.user) {
         await loadUserBase(session.user.id);
       } else {
         setUserBase(null);
         setLastBusinessError(null);
-        setLoading(false);
+        setLoading(false); // 👈 ne jamais bloquer l'UI
       }
     });
 
-    return () => subscription.unsubscribe();
+    // 2) Session initiale (ne JAMAIS bloquer si erreur)
+    (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!mountedRef.current) return;
+
+        setUser(session?.user ?? null);
+        if (session?.user) {
+          await loadUserBase(session.user.id);
+        }
+      } catch (e) {
+        console.error('[auth.getSession] failed:', e);
+        // En cas de refresh token invalide : on laisse l’UI afficher Login.
+      } finally {
+        if (mountedRef.current) setLoading(false);
+      }
+    })();
+
+    return () => {
+      mountedRef.current = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loadUserBase = async (userId: string) => {
-    setLoading(true);
+    // Note: on évite un "loading" global prolongé ici pour garder l’UI réactive.
     setLastBusinessError(null);
     try {
       // 1) Lire users_base
@@ -53,12 +72,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .select('*')
         .eq('id', userId)
         .maybeSingle();
-
       if (ubErr) throw ubErr;
       setUserBase(ub ?? null);
 
-      // 2) Vérifier le client actif (si on a un client_id)
-      if (ub?.client_id) {
+      // 2) Vérifier le client actif UNIQUEMENT si admin (RLS restreint pour assistants)
+      if (ub?.client_id && ub?.type_utilisateur === 'admin') {
         const { data: cli, error: cliErr } = await supabase
           .from('clients')
           .select('statut')
@@ -74,22 +92,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       console.error('Erreur chargement profil utilisateur:', error);
-      // On n'écrase pas user ici ; l’app pourra afficher un message ou proposer un refresh.
-    } finally {
-      setLoading(false);
+      // On ne bloque pas l’UI : pas de setLoading(true) ici.
     }
   };
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
-    // onAuthStateChange se chargera de charger users_base / clients / etc.
+    // onAuthStateChange => loadUserBase
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-    setLastBusinessError(null);
+    try {
+      await supabase.auth.signOut({ scope: 'global' });
+    } finally {
+      setLastBusinessError(null);
+      setUserBase(null);
+      setUser(null);
+      // Pas de reload ici : laisse App décider (ou ajoute un redirect si tu veux).
+    }
   };
 
   return (
