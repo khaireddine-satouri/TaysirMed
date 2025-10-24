@@ -1,7 +1,7 @@
 // src/components/ScheduleSeanceModal.tsx
 import { useEffect, useMemo, useState } from "react";
-import { supabase, Patient, DossierSoin, UserBase } from "../lib/supabase";
-import { useAuth } from "../contexts/AuthContext";
+import { supabase, Patient, DossierSoin, UserBase } from "../../lib/supabase";
+import { useAuth } from "../../contexts/AuthContext";
 import { X, Search, Clock } from "lucide-react";
 
 /* ----------------- Helpers fuseau Africa/Tunis ----------------- */
