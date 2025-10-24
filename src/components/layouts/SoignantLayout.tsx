@@ -1,9 +1,8 @@
-import { ReactNode, useEffect, useMemo, useState } from 'react';
-import { Send, Inbox, Bell } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
-import { LogOut, Users, FileText, Calendar, Settings, BarChart3, CalendarRange } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
-import { useNewTicketsIndicator } from '../../hooks/useNewTicketsIndicator';
+import { ReactNode, useEffect, useState } from 'react';
+import { Send, Inbox, Bell, LogOut, Users, FileText, Calendar, Settings, BarChart3, CalendarRange } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
+import { useNewTicketsIndicator } from '../hooks/useNewTicketsIndicator';
 
 interface LayoutProps {
   children: ReactNode;
@@ -11,22 +10,33 @@ interface LayoutProps {
   onNavigate: (view: string) => void;
 }
 
-export default function Layout({ children, currentView, onNavigate }: LayoutProps) {
+export default function LayoutSoignant({ children, currentView, onNavigate }: LayoutProps) {
   const { userBase, signOut } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
 
   const isAdmin = userBase?.type_utilisateur === 'admin';
   const clientId = userBase?.client_id ?? null;
 
-  // true  -> il existe au moins un assistant pour ce client
-  // false -> aucun assistant trouvé
-  // null  -> inconnu (chargement)
+  const [clientName, setClientName] = useState<string>(""); // nom dynamique du client
   const [hasAssistants, setHasAssistants] = useState<boolean | null>(null);
 
-  // --- Compteur de nouveaux tickets pour l'admin (du jour) ---
-  const { count: newTicketsCount, markAsSeen, refresh } = useNewTicketsIndicator(clientId, isAdmin);
+  // Tickets collaborateurs
+  const { count: newTicketsCount, markAsSeen } = useNewTicketsIndicator(clientId, isAdmin);
   const showTicketsUI = isAdmin && hasAssistants === true;
 
+  // 🔹 Charger le nom du client dynamiquement
+  useEffect(() => {
+    if (!clientId) return;
+    const loadClient = async () => {
+      const { data, error } = await supabase.from("clients").select("nom").eq("id", clientId).maybeSingle();
+      if (!error && data) {
+        setClientName(data.nom);
+      }
+    };
+    loadClient();
+  }, [clientId]);
+
+  // Vérifier existence assistants
   useEffect(() => {
     let cancelled = false;
 
@@ -64,14 +74,14 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
     };
   }, [isAdmin, clientId]);
 
-  // Si l’admin n’a pas d’assistants et qu’on est sur l’onglet “tickets_admin”, on renvoie vers Analyse
+  // Redirection si admin sans assistants et onglet tickets_admin actif
   useEffect(() => {
     if (isAdmin && hasAssistants === false && currentView === 'tickets_admin') {
       onNavigate('analyse');
     }
   }, [isAdmin, hasAssistants, currentView, onNavigate]);
 
-  // Quand on arrive déjà sur la page tickets_admin, purge le badge
+  // Marquer tickets comme vus quand on arrive sur tickets_admin
   useEffect(() => {
     if (showTicketsUI && currentView === 'tickets_admin') {
       markAsSeen();
@@ -94,7 +104,6 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
 
   const goTicketsAdmin = async () => {
     if (!showTicketsUI) return;
-    // on purge le compteur puis on navigue
     await markAsSeen();
     onNavigate('tickets_admin');
   };
@@ -105,16 +114,17 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
       <header className="bg-white shadow-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <h1 className="text-xl font-bold text-teal-600">Cabinet Ayadi Radhouan</h1>
+            <h1 className="text-xl font-bold text-teal-600">
+              {clientName ? `Cabinet ${clientName}` : "Cabinet"}
+            </h1>
 
             <div className="flex items-center gap-3">
-              {/* Cloche de notifications (admin + a des assistants) */}
+              {/* Cloche notifications */}
               {showTicketsUI && (
                 <button
                   type="button"
                   onClick={goTicketsAdmin}
-                  aria-label="Tickets collaborateurs"
-                  className="relative p-3 sm:p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition active:scale-[0.98] touch-manipulation"
+                  className="relative p-3 sm:p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
                   title="Tickets collaborateurs"
                 >
                   <Bell className="w-6 h-6 sm:w-5 sm:h-5" />
@@ -138,8 +148,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
               <button
                 type="button"
                 onClick={handleSignOut}
-                aria-label="Déconnexion"
-                className="p-3 sm:p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition active:scale-[0.98] touch-manipulation"
+                className="p-3 sm:p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
                 title="Déconnexion"
               >
                 <LogOut className="w-6 h-6 sm:w-5 sm:h-5" />
@@ -149,147 +158,72 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
         </div>
       </header>
 
-      {/* Nav */}
+      {/* Navigation */}
       <nav className="bg-white border-b border-gray-200 overflow-x-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex space-x-1 py-2">
             {/* Analyse (admin) */}
             {isAdmin && (
-              <button
-                type="button"
-                onClick={() => onNavigate('analyse')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'analyse'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-                title="Indicateurs & statistiques"
-              >
-                <BarChart3 className="w-4 h-4" />
-                Analyse
-              </button>
+              <NavButton icon={<BarChart3 className="w-4 h-4" />} label="Analyse" view="analyse" currentView={currentView} onNavigate={onNavigate} />
             )}
 
             {/* Dashboard (admin) */}
             {isAdmin && (
-              <button
-                type="button"
-                onClick={() => onNavigate('dashboard')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'dashboard'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <FileText className="w-4 h-4" />
-                Tableau de bord
-              </button>
+              <NavButton icon={<FileText className="w-4 h-4" />} label="Tableau de bord" view="dashboard" currentView={currentView} onNavigate={onNavigate} />
             )}
 
-            {/* Patients (tous) */}
-            <button
-              type="button"
-              onClick={() => onNavigate('patients')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                currentView === 'patients'
-                  ? 'bg-teal-50 text-teal-700'
-                  : 'text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              Patients
-            </button>
+            {/* Patients */}
+            <NavButton icon={<Users className="w-4 h-4" />} label="Patients" view="patients" currentView={currentView} onNavigate={onNavigate} />
 
-            {/* Effectif du jour (tous) */}
-            <button
-              type="button"
-              onClick={() => onNavigate('effectif')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                currentView === 'effectif'
-                  ? 'bg-teal-50 text-teal-700'
-                  : 'text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              <Calendar className="w-4 h-4" />
-              Séances du jour
-            </button>
+            {/* Séances du jour */}
+            <NavButton icon={<Calendar className="w-4 h-4" />} label="Séances du jour" view="effectif" currentView={currentView} onNavigate={onNavigate} />
 
-            {/* Planning (tous) */}
-            <button
-              type="button"
-              onClick={() => onNavigate('planning')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                currentView === 'planning'
-                  ? 'bg-teal-50 text-teal-700'
-                  : 'text-gray-600 hover:bg-gray-50'
-              }`}
-              title="Agenda par heure"
-            >
-              <CalendarRange className="w-4 h-4" />
-              Planning
-            </button>
+            {/* Planning */}
+            <NavButton icon={<CalendarRange className="w-4 h-4" />} label="Planning" view="planning" currentView={currentView} onNavigate={onNavigate} />
 
             {/* Tickets collaborateur (assistants) */}
             {!isAdmin && (
-              <button
-                type="button"
-                onClick={() => onNavigate('tickets_collab')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'tickets_collab'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <Send className="w-4 h-4" />
-                Envoyer un ticket
-              </button>
+              <NavButton icon={<Send className="w-4 h-4" />} label="Envoyer un ticket" view="tickets_collab" currentView={currentView} onNavigate={onNavigate} />
             )}
 
-            {/* Tickets collaborateurs (admin) — visible uniquement s’il y a des assistants) */}
+            {/* Tickets collaborateurs (admin) */}
             {showTicketsUI && (
-              <button
-                type="button"
-                onClick={goTicketsAdmin}
-                className={`relative flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'tickets_admin'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <Inbox className="w-4 h-4" />
-                <span>Tickets staff</span>
-
-                {/* Badge mini dans l’onglet */}
-                {newTicketsCount > 0 && (
-                  <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px]">
-                    {newTicketsCount > 99 ? '99+' : newTicketsCount}
-                  </span>
-                )}
-              </button>
+              <NavButton icon={<Inbox className="w-4 h-4" />} label="Tickets staff" view="tickets_admin" currentView={currentView} onNavigate={onNavigate} badge={newTicketsCount} />
             )}
 
             {/* Paramètres (admin) */}
             {isAdmin && (
-              <button
-                type="button"
-                onClick={() => onNavigate('settings')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'settings'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <Settings className="w-4 h-4" />
-                Paramètres
-              </button>
+              <NavButton icon={<Settings className="w-4 h-4" />} label="Paramètres" view="settings" currentView={currentView} onNavigate={onNavigate} />
             )}
           </div>
         </div>
       </nav>
 
+      {/* Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {children}
       </main>
     </div>
+  );
+}
+
+// ✅ composant bouton de nav factorisé
+function NavButton({ icon, label, view, currentView, onNavigate, badge }: any) {
+  return (
+    <button
+      type="button"
+      onClick={() => onNavigate(view)}
+      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
+        currentView === view ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
+      }`}
+    >
+      {icon}
+      <span>{label}</span>
+      {badge && badge > 0 && (
+        <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px]">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </button>
   );
 }
