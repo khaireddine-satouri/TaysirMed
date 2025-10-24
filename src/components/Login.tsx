@@ -1,34 +1,32 @@
 // src/components/Login.tsx
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Stethoscope, Mail, Phone } from 'lucide-react';
 
-interface LoginProps {
-  onGoSignup?: () => void; // ⬅️ pour ouvrir l'écran d'inscription depuis App.tsx
-}
-
-export default function Login({ onGoSignup }: LoginProps) {
+export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [authError, setAuthError] = useState(''); // uniquement erreurs d'auth (mauvais mdp, etc.)
   const [loading, setLoading] = useState(false);
-  const { signIn } = useAuth();
+  const { signIn, lastBusinessError } = useAuth();
+
+  // Afficher message métier (ex: client inactif) proprement
+  const businessMessage =
+    lastBusinessError === 'INACTIVE_CLIENT'
+      ? "Votre compte est désactivé. Veuillez contacter l'administrateur de la plateforme."
+      : '';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    setLoading(true);
-
+    setAuthError('');
     try {
-      await signIn(email.trim(), password);
+      setLoading(true);
+      await signIn(email, password);
+      // si OK, onAuthStateChange fera la suite (chargement profil)
     } catch (err: any) {
-      if (err?.message === 'INACTIVE_CLIENT') {
-        setError(
-          "Votre compte est désactivé. Veuillez contacter l'administrateur de la plateforme."
-        );
-      } else {
-        setError('Email ou mot de passe incorrect');
-      }
+      // Ici, ce sont *vraiment* des erreurs d'identifiants
+      // Supabase renvoie souvent: { message: 'Invalid login credentials' }
+      setAuthError('Email ou mot de passe incorrect');
     } finally {
       setLoading(false);
     }
@@ -44,9 +42,7 @@ export default function Login({ onGoSignup }: LoginProps) {
               <Stethoscope className="w-8 h-8 text-teal-600" />
             </div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">TaysirMed</h1>
-            <p className="text-gray-600">
-              Connexion à votre espace professionnel
-            </p>
+            <p className="text-gray-600">Connexion à votre espace</p>
           </div>
 
           {/* Form */}
@@ -59,12 +55,12 @@ export default function Login({ onGoSignup }: LoginProps) {
               <input
                 id="email"
                 type="email"
-                autoComplete="email"
+                autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
-                placeholder="votre@email.com"
+                placeholder="vous@domaine.com"
               />
             </div>
 
@@ -85,10 +81,11 @@ export default function Login({ onGoSignup }: LoginProps) {
               />
             </div>
 
-            {/* Error message */}
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-                {error}
+            {/* Error messages */}
+            {(authError || businessMessage) && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm space-y-1">
+                {authError && <div>{authError}</div>}
+                {businessMessage && <div>{businessMessage}</div>}
               </div>
             )}
 
@@ -98,29 +95,21 @@ export default function Login({ onGoSignup }: LoginProps) {
               disabled={loading}
               className="w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-3 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Connexion...' : 'Se connecter'}
+              {loading ? 'Connexion…' : 'Se connecter'}
             </button>
+
+            {/* Link to signup */}
+            <div className="text-center text-sm">
+              <a href="/signup" className="text-teal-700 hover:underline">
+                Nouveau ? Créer un compte
+              </a>
+            </div>
           </form>
-
-          {/* Divider + Signup */}
-          <div className="flex items-center gap-3">
-            <div className="h-px bg-gray-200 flex-1" />
-            <span className="text-xs text-gray-400">ou</span>
-            <div className="h-px bg-gray-200 flex-1" />
-          </div>
-
-          <button
-            type="button"
-            onClick={onGoSignup}
-            className="w-full border border-teal-600 text-teal-700 hover:bg-teal-50 font-medium py-3 rounded-lg transition"
-          >
-            Créer un compte
-          </button>
 
           {/* Contact info */}
           <div className="space-y-4">
             <p className="text-center text-xs text-gray-400">
-              Besoin d'aide ? Contactez nous :
+              Ce site est à usage personnel. Pour toute demande d’information, veuillez nous contacter :
             </p>
 
             <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
@@ -137,11 +126,6 @@ export default function Login({ onGoSignup }: LoginProps) {
               </a>
             </div>
           </div>
-
-          {/* Legal */}
-          <p className="text-center text-[11px] text-gray-400">
-            En vous connectant, vous acceptez nos conditions d’utilisation et notre politique de confidentialité.
-          </p>
         </div>
       </div>
     </div>
