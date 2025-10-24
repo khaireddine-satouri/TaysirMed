@@ -219,6 +219,16 @@ function AppContent() {
 
   // ===== Client connu mais type non encore chargé : petit spinner, pas de blocage infini global
   if (clientLoading) return <SpinnerFull />;
+  if (!clientType) {
+  return (
+    <NoTenantScreen
+      onRefresh={() => window.location.reload()}
+      onSignOut={async () => {
+        try { await supabase.auth.signOut(); } finally { window.location.reload(); }
+      }}
+    />
+  );
+}
 
   // ===== Navigation commune =====
   const handleNavigate = (view: string) => {
