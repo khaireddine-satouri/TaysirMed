@@ -1,8 +1,13 @@
+// src/components/Login.tsx
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Stethoscope, Mail, Phone } from 'lucide-react';
 
-export default function Login() {
+interface LoginProps {
+  onGoSignup?: () => void; // ⬅️ pour ouvrir l'écran d'inscription depuis App.tsx
+}
+
+export default function Login({ onGoSignup }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -15,10 +20,12 @@ export default function Login() {
     setLoading(true);
 
     try {
-      await signIn(email, password);
+      await signIn(email.trim(), password);
     } catch (err: any) {
-      if (err.message === 'INACTIVE_CLIENT') {
-        setError('Votre compte est désactivé. Veuillez contacter l\'administrateur de la plateforme.');
+      if (err?.message === 'INACTIVE_CLIENT') {
+        setError(
+          "Votre compte est désactivé. Veuillez contacter l'administrateur de la plateforme."
+        );
       } else {
         setError('Email ou mot de passe incorrect');
       }
@@ -36,8 +43,10 @@ export default function Login() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-teal-100 rounded-full mb-4">
               <Stethoscope className="w-8 h-8 text-teal-600" />
             </div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">Cabinet Ayadi Radhouan</h1>
-            <p className="text-gray-600">Gestion des dossiers de soins</p>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">TaysirMed</h1>
+            <p className="text-gray-600">
+              Connexion à votre espace professionnel
+            </p>
           </div>
 
           {/* Form */}
@@ -50,6 +59,7 @@ export default function Login() {
               <input
                 id="email"
                 type="email"
+                autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -66,6 +76,7 @@ export default function Login() {
               <input
                 id="password"
                 type="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -81,7 +92,7 @@ export default function Login() {
               </div>
             )}
 
-            {/* Submit button */}
+            {/* Submit */}
             <button
               type="submit"
               disabled={loading}
@@ -91,16 +102,31 @@ export default function Login() {
             </button>
           </form>
 
+          {/* Divider + Signup */}
+          <div className="flex items-center gap-3">
+            <div className="h-px bg-gray-200 flex-1" />
+            <span className="text-xs text-gray-400">ou</span>
+            <div className="h-px bg-gray-200 flex-1" />
+          </div>
+
+          <button
+            type="button"
+            onClick={onGoSignup}
+            className="w-full border border-teal-600 text-teal-700 hover:bg-teal-50 font-medium py-3 rounded-lg transition"
+          >
+            Créer un compte
+          </button>
+
           {/* Contact info */}
           <div className="space-y-4">
             <p className="text-center text-xs text-gray-400">
-              Ce site est à usage personnel. Pour toute demande d’information, veuillez contacter l’administrateur du site :
+              Besoin d'aide ? Contactez l’administrateur :
             </p>
 
             <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
               <Mail className="w-4 h-4 text-teal-600" />
-              <a href="radhouan.ayadi@gmail.com" className="hover:underline">
-                	radhouan.ayadi@gmail.com
+              <a href="mailto:radhouan.ayadi@gmail.com" className="hover:underline">
+                radhouan.ayadi@gmail.com
               </a>
             </div>
 
@@ -111,6 +137,11 @@ export default function Login() {
               </a>
             </div>
           </div>
+
+          {/* Legal */}
+          <p className="text-center text-[11px] text-gray-400">
+            En vous connectant, vous acceptez nos conditions d’utilisation et notre politique de confidentialité.
+          </p>
         </div>
       </div>
     </div>
