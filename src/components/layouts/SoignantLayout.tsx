@@ -1,17 +1,39 @@
-import { ReactNode, useEffect, useMemo, useState } from 'react';
-import { Send, Inbox, Bell } from 'lucide-react';
+import { ReactNode, useEffect, useState } from 'react';
+import { Send, Inbox, Bell, LogOut, Users, FileText, Calendar, Settings, BarChart3, CalendarRange, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { LogOut, Users, FileText, Calendar, Settings, BarChart3, CalendarRange } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useNewTicketsIndicator } from '../hooks/useNewTicketsIndicator';
 
-interface LayoutProps {
+interface SoignantLayoutProps {
   children: ReactNode;
   currentView: string;
   onNavigate: (view: string) => void;
+
+  /** Titre dynamique (ex. "Cabinet Nom Prénom") */
+  clinicName?: string;
+
+  /**
+   * Affiche la charte si true (optionnel). Le Layout n’impose aucune logique :
+   * - onAcceptCharter est appelé si l’utilisateur accepte.
+   * - onRefuseCharter est appelé si l’utilisateur refuse.
+   *
+   * Si tu veux “désactiver” des actions tant que la charte n’est pas acceptée,
+   * fais-le dans les composants enfants, via un état que tu gères dans App.
+   */
+  showCharter?: boolean;
+  onAcceptCharter?: () => void;
+  onRefuseCharter?: () => void;
 }
 
-export default function Layout({ children, currentView, onNavigate }: LayoutProps) {
+export default function SoignantLayout({
+  children,
+  currentView,
+  onNavigate,
+  clinicName,
+  showCharter = false,
+  onAcceptCharter,
+  onRefuseCharter,
+}: SoignantLayoutProps) {
   const { userBase, signOut } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
 
@@ -24,7 +46,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
   const [hasAssistants, setHasAssistants] = useState<boolean | null>(null);
 
   // --- Compteur de nouveaux tickets pour l'admin (du jour) ---
-  const { count: newTicketsCount, markAsSeen, refresh } = useNewTicketsIndicator(clientId, isAdmin);
+  const { count: newTicketsCount, markAsSeen /*, refresh*/ } = useNewTicketsIndicator(clientId, isAdmin);
   const showTicketsUI = isAdmin && hasAssistants === true;
 
   useEffect(() => {
@@ -105,7 +127,9 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
       <header className="bg-white shadow-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <h1 className="text-xl font-bold text-teal-600">Cabinet Ayadi Radhouan</h1>
+            <h1 className="text-xl font-bold text-teal-600">
+              {clinicName?.trim() || 'Cabinet'}
+            </h1>
 
             <div className="flex items-center gap-3">
               {/* Cloche de notifications (admin + a des assistants) */}
@@ -287,9 +311,54 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
         </div>
       </nav>
 
+      {/* Contenu */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {children}
       </main>
+
+      {/* ----- Modal de Charte (optionnel) ----- */}
+      {showCharter && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white w-full max-w-2xl rounded-xl shadow-xl border">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold">Charte d’utilisation</h3>
+              <button
+                type="button"
+                onClick={onRefuseCharter}
+                className="p-2 rounded hover:bg-gray-100"
+                aria-label="Fermer"
+                title="Fermer"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {/* Laisse vide pour l’instant comme demandé */}
+              <div className="prose prose-sm max-w-none text-gray-700">
+                {/* Texte de la charte à insérer plus tard */}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 p-4 border-t">
+              <button
+                type="button"
+                onClick={onRefuseCharter}
+                className="px-4 py-2 rounded-lg border hover:bg-gray-50"
+              >
+                Refuser
+              </button>
+              <button
+                type="button"
+                onClick={onAcceptCharter}
+                className="px-4 py-2 rounded-lg bg-teal-600 text-white hover:bg-teal-700"
+              >
+                J’accepte
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
