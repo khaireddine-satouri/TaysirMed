@@ -1,6 +1,6 @@
 import { Bell } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
-import { useNewTicketsIndicator } from '../hooks/useNewTicketsIndicator';
+import { useAuth } from '../../contexts/AuthContext';
+import { useNewTicketsIndicator } from '../../hooks/useNewTicketsIndicator';
 import { useNavigate } from 'react-router-dom';
 
 export default function BadgeTicketsButton() {
