@@ -120,13 +120,13 @@ export default function Login({ onGoSignup }: LoginProps) {
           {/* Contact info */}
           <div className="space-y-4">
             <p className="text-center text-xs text-gray-400">
-              Besoin d'aide ? Contactez l’administrateur :
+              Besoin d'aide ? Contactez nous :
             </p>
 
             <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
               <Mail className="w-4 h-4 text-teal-600" />
-              <a href="mailto:radhouan.ayadi@gmail.com" className="hover:underline">
-                radhouan.ayadi@gmail.com
+              <a href="mailto:contact@taysirmed.tn" className="hover:underline">
+                contact@taysirmed.tn
               </a>
             </div>
 
