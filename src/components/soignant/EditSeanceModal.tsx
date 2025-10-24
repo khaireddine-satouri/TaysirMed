@@ -1,7 +1,7 @@
 // src/components/EditSeanceModal.tsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase, Seance, UserBase } from "../../lib/supabase";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../../contexts/AuthContext";
 import { X, Trash2, AlertTriangle } from "lucide-react";
 
 /* ----------------- Helpers ----------------- */
