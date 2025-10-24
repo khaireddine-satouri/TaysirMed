@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase, Seance, UserBase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
+import { supabase, Seance, UserBase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import {
   BarChart3,
   Calendar,
