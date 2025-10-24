@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase, UserBase, Patient, DossierSoin, Seance } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
+import { supabase, UserBase, Patient, DossierSoin, Seance } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, Undo2 } from 'lucide-react';
 import { useNewTicketsIndicator } from '../hooks/useNewTicketsIndicator';
 
