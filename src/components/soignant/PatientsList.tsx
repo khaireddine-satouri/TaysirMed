@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase, Patient } from '../lib/supabase';
 import { Search, Plus, User, Phone, X, Trash2 } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../../contexts/AuthContext';
 import PhotoUploadSection from './PhotoUploadSection';
 
 interface PatientWithUrl extends Patient {
