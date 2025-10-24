@@ -1,174 +1,211 @@
 // src/lib/supabase.ts
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
 
 /**
- * Client Supabase
+ * Initialisation Supabase
  */
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables. Please check your .env file.');
+  throw new Error("Missing Supabase env vars. Check .env (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).");
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+});
 
-/**
- * Types de base (V2)
- */
-export type ClientType = 'soignant' | 'medecin';
-export type UserRole = 'admin' | 'assistant' | 'secretaire';
+/* ======================================================================
+ * Types de base (enums) — alignés avec le schema V2
+ * ==================================================================== */
+
+export type ClientStatut = "actif" | "inactif";
+export type TypeUtilisateur = "admin" | "assistant" | "secretaire";
+export type TypeClient = "soignant" | "medecin";
+
+export type DossierEtat = "a_venir" | "en_cours" | "termine";
+export type EtatPec = "en_cours" | "depose";
+export type EtatSeance = "programmee" | "realisee";
+export type TicketStatus = "non_traite" | "en_cours" | "traite";
+export type ConsultationStatut = "planifiee" | "realisee" | "annulee" | "absent";
+
+/** Recommandation: manipuler les colonnes *_ct (bytea) en Uint8Array côté front. */
+export type Ciphertext = Uint8Array;
+
+/* ======================================================================
+ * Tables
+ * ==================================================================== */
 
 export interface Client {
   id: string;
-  nom: string;                                // "Nom Prenom" à la création
-  statut: 'actif' | 'inactif';
-  type_client: ClientType;                    // ⬅️ V2
-  created_at: string | null;
-  updated_at: string | null;
+  nom: string;
+  statut: ClientStatut;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface UserBase {
-  id: string;                                 // = auth.users.id
+  id: string; // = auth.users.id
   nom: string;
   prenom: string;
-  type_utilisateur: UserRole;                 // ⬅️ V2 (admin/assistant/secretaire)
+  type_utilisateur: TypeUtilisateur;
+  type_client: TypeClient;
   client_id: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-}
-
-/**
- * (Legacy v1) – tu peux les garder si des écrans V1 les utilisent encore.
- * Pour la V2 (données chiffrées), l’app fera ses propres DTO côté UI si besoin.
- */
-export interface Patient {
-  id: string;
-  nom: string;
-  prenom: string;
-  telephone: string;
-  telephone_2?: string | null;
-  photo_url: string | null;
-  photo_path?: string | null;
-  client_id: string | null;
-  created_by: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface DossierSoinV1 {
+/** Patients — données sensibles chiffrées (zero-knowledge) */
+export interface PatientCipher {
+  id: string;
+  nom_ct: Ciphertext;
+  prenom_ct: Ciphertext;
+  telephone_ct: Ciphertext;
+  telephone2_ct?: Ciphertext | null;
+  created_by: string | null;
+  client_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Dossiers de soins (soignant) — champs sensibles chiffrés */
+export interface DossierSoins {
   id: string;
   patient_id: string;
-  motif: string;
-  commentaire: string;
-  nombre_seances: number;
+  motif_ct: Ciphertext;
+  commentaire_ct?: Ciphertext | null;
+
+  nombre_seances: number; // >= 0
   pec_cnam: boolean;
-  etat_pec: 'en_cours' | 'depose' | null;
-  prix_par_seance: number;
-  date_debut: string | null;
-  date_fin: string | null;
-  etat: 'a_venir' | 'en_cours' | 'termine';
-  est_actif?: boolean | null;
-  client_id: string | null;
+  prix_par_seance: number | null; // <-- pas de default (peut etre null)
+  date_debut: string | null; // ISO date
+  date_fin: string | null;   // ISO date
+  etat: DossierEtat;
+  etat_pec: EtatPec;
+  est_actif: boolean;        // mis à jour par triggers
+  est_paye: boolean | null;
+
   created_by: string | null;
+  updated_by: string | null;
+  client_id: string;
   created_at: string;
   updated_at: string;
-  updated_by: string | null;
 }
 
-export interface SeanceV1 {
+export interface Seance {
   id: string;
   dossier_id: string;
   numero_seance: number;
-  date_seance: string;
+  date_seance: string;        // ISO date
+  heure_seance: string | null; // "HH:MM:SS"
+  duree_minutes: number | null;
   prestataire_id: string;
-  montant_paye: number;
+  montant_paye: number;       // >= 0 (default 0)
+  etat_seance: EtatSeance;    // "programmee" | "realisee"
   note: string | null;
   created_at: string;
 }
 
-export interface DocumentV1 {
+/** Dossier médecin — champs sensibles chiffrés */
+export interface DossierMedecin {
   id: string;
-  dossier_id: string;
+  patient_id: string;
+  motif_ct: Ciphertext;
+  date_ouverture: string | null; // ISO date
+  date_fermeture: string | null; // ISO date
+  created_by: string | null;
+  updated_by: string | null;
+  client_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Consultations (rendez-vous médecin) */
+export interface Consultation {
+  id: string;
+  dossier_medecin_id: string | null;
+  patient_id: string;
+  medecin_id: string;
+  date_heure: string;           // ISO datetime
+  duree_minutes: number;        // > 0, default 20
+  statut: ConsultationStatut;
+  commentaire: string | null;
+  client_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Documents (fichiers chiffrés côté client avant upload) */
+export interface DocumentRow {
+  id: string;
+  dossier_id: string;                 // id d'un dossier soins ou medecin
+  type_dossier: "soins" | "medecin";  // pour RLS
   nom: string;
-  type_fichier: 'photo' | 'pdf';
-  storage_path: string;
+  type_fichier: "photo" | "pdf" | "autre";
+  storage_path: string;               // chemin Storage (prive)
+  is_encrypted: boolean;              // default true
+  enc_scheme: string | null;          // "client-side" etc.
   uploaded_by: string | null;
+  client_id: string;
   created_at: string;
 }
 
-/**
- * Helpers “signup” – côté front
- *
- * ⚠️ IMPORTANT
- * Pour respecter tes RLS (pas d’INSERT direct sur clients/users_base),
- * on appelle une RPC Postgres (SECURITY DEFINER) que tu vas créer côté DB :
- *
- *   create or replace function public.bootstrap_tenant_admin(
- *     p_email text,
- *     p_user_id uuid,
- *     p_nom text,
- *     p_prenom text,
- *     p_type_client text  -- 'soignant' | 'medecin'
- *   ) returns uuid ...
- *
- * Cette RPC doit :
- *   1) créer le client (nom = "Nom Prenom", type_client)
- *   2) insérer users_base (id = p_user_id, type_utilisateur='admin', client_id = nouveau client)
- *   3) retourner client_id
- *
- * Tu peux me demander le script si tu veux, je l’ai prêt.
- */
-export async function signUpAndBootstrapTenant(params: {
-  email: string;
-  password: string;
-  nom: string;
-  prenom: string;
-  type_client: ClientType;
-}) {
-  const { email, password, nom, prenom, type_client } = params;
-
-  // 1) Création du compte Auth
-  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      // on pousse aussi des métadonnées utiles aux triggers éventuels
-      data: {
-        nom,
-        prenom,
-        type_utilisateur: 'admin',
-        // type_client est utilisé par la RPC (source de vérité = DB)
-        wanted_type_client: type_client,
-        // utile si email confirmations actives => redirection
-        // (ajuste l’URL à ton domaine)
-        // redirectTo: `${window.location.origin}/login`
-      },
-    },
-  });
-  if (signUpError) throw signUpError;
-
-  const userId = signUpData.user?.id;
-  if (!userId) {
-    // si confirmation e-mail est activée, l’utilisateur n’est pas connecté ici
-    // on arrête proprement : la RPC se fera après confirmation dans un écran dédié si besoin
-    return { userId: null, clientId: null, needsEmailConfirmation: true };
-  }
-
-  // 2) Bootstrap tenant via RPC
-  const { data: rpcData, error: rpcErr } = await supabase.rpc('bootstrap_tenant_admin', {
-    p_email: email,
-    p_user_id: userId,
-    p_nom: nom,
-    p_prenom: prenom,
-    p_type_client: type_client,
-  });
-
-  if (rpcErr) throw rpcErr;
-
-  return {
-    userId,
-    clientId: rpcData as string | null,
-    needsEmailConfirmation: false,
-  };
+/** Tickets (support interne) */
+export interface Ticket {
+  id: string;
+  client_id: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  sujet: string;
+  commentaire: string | null;
+  patient_id: string | null;
+  dossier_soins_id: string | null;
+  dossier_medecin_id: string | null;
+  seance_id: string | null;
+  statut: TicketStatus;
+  admin_comment: string | null;
+  treated_at: string | null;
+  treated_by: string | null;
 }
+
+/* ======================================================================
+ * Helpers légers (facultatifs, utiles pour le routeur / header)
+ * ==================================================================== */
+
+/** Récupérer le profil users_base du user courant. */
+export async function getCurrentProfile(): Promise<UserBase | null> {
+  const { data: session } = await supabase.auth.getSession();
+  const uid = session.session?.user.id;
+  if (!uid) return null;
+  const { data, error } = await supabase
+    .from("users_base")
+    .select("id, nom, prenom, type_utilisateur, type_client, client_id, created_at, updated_at")
+    .eq("id", uid)
+    .single();
+  if (error) return null;
+  return data as UserBase;
+}
+
+/** Récupérer le client courant (du profil). */
+export async function getCurrentClient(): Promise<Client | null> {
+  const profile = await getCurrentProfile();
+  if (!profile?.client_id) return null;
+  const { data, error } = await supabase
+    .from("clients")
+    .select("*")
+    .eq("id", profile.client_id)
+    .single();
+  if (error) return null;
+  return data as Client;
+}
+
+/* ======================================================================
+ * Notes importantes pour le front:
+ * - Les colonnes *_ct sont des bytea : utiliser Uint8Array avec supabase-js.
+ * - Chiffrement/Dechiffrement 100% côté client (WebCrypto).
+ * - Si tu veux rechercher par nom/téléphone, prévoir des "blind indexes".
+ * ==================================================================== */
