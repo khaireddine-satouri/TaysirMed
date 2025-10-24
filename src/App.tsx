@@ -6,21 +6,22 @@ import Signup from './components/Signup';
 
 // ===== Soignant (V1 inchangé) =====
 import SoignantLayout from './components/layouts/SoignantLayout';
-import PatientsList from './components/PatientsList';
-import PatientDetail from './components/PatientDetail';
-import DossierDetail from './components/DossierDetail';
-import EffectifDuJour from './components/EffectifDuJour';
-import Dashboard, { Filters as DashboardFilters } from './components/Dashboard';
-import Settings from './components/Settings';
-import AdminAnalytics from './components/AdminAnalytics';
-import TicketsCollaborateur from './components/TicketsCollaborateur';
-import TicketsAdmin from './components/TicketsAdmin';
-import Planning from './components/Planning';
+import PatientsList from './components/soignant/PatientsList';
+import PatientDetail from './components/soignant/PatientDetail';
+import DossierDetail from './components/soignant/DossierDetail';
+import EffectifDuJour from './components/soignant/EffectifDuJour';
+import Dashboard, { Filters as DashboardFilters } from './components/soignant/Dashboard';
+import Settings from './components/soignant/Settings';
+import AdminAnalytics from './components/soignant/AdminAnalytics';
+import TicketsCollaborateur from './components/soignant/TicketsCollaborateur';
+import TicketsAdmin from './components/soignant/TicketsAdmin';
+import Planning from './components/soignant/Planning';
 
 // ===== Médecin =====
 import MedecinLayout from './components/layouts/MedecinLayout';
+import RendezVousList from './components/medecin/RendezVousList';
 
-import { supabase } from './lib/supabase';
+import { supabase, Patient, DossierSoin } from './lib/supabase';
 
 type View =
   | 'dashboard'
@@ -43,16 +44,6 @@ function SpinnerFull() {
   );
 }
 
-/** Placeholder RDV (médecin) — écran vide pour l’instant */
-function MedecinRendezVousEmpty() {
-  return (
-    <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
-      <h2 className="text-lg font-semibold mb-2">Prochains rendez-vous</h2>
-      <p className="text-gray-600">Aucun rendez-vous pour le moment.</p>
-    </div>
-  );
-}
-
 function AppContent() {
   const { user, userBase, loading } = useAuth();
 
@@ -67,8 +58,8 @@ function AppContent() {
   const [currentView, setCurrentView] = useState<View>('patients');
 
   // états V1 (soignant)
-  const [selectedPatient, setSelectedPatient] = useState<any | null>(null);
-  const [selectedDossier, setSelectedDossier] = useState<any | null>(null);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [selectedDossier, setSelectedDossier] = useState<DossierSoin | null>(null);
   const [dashOverrideFilters, setDashOverrideFilters] =
     useState<DashboardFilters | null>(null);
 
@@ -129,8 +120,21 @@ function AppContent() {
 
   if (!user || !userBase) {
     hasInitializedDefaultView.current = false;
-    if (pathname === '/signup') return <Signup />;
-    return <Login />;
+
+    if (pathname === '/signup') {
+      return <Signup />;
+    }
+
+    return (
+      <Login
+        onGoSignup={() => {
+          // navigation simple sans router
+          if (typeof window !== 'undefined') {
+            window.location.href = '/signup';
+          }
+        }}
+      />
+    );
   }
 
   if (clientLoading || !clientType) return <SpinnerFull />;
@@ -144,11 +148,11 @@ function AppContent() {
   };
 
   // ===== Actions V1 (soignant) =====
-  const handleSelectPatient = (patient: any) => {
+  const handleSelectPatient = (patient: Patient) => {
     setSelectedPatient(patient);
     setSelectedDossier(null);
   };
-  const handleSelectDossier = (dossier: any) => setSelectedDossier(dossier);
+  const handleSelectDossier = (dossier: DossierSoin) => setSelectedDossier(dossier);
   const handleBackToPatients = () => {
     setSelectedPatient(null);
     setSelectedDossier(null);
@@ -163,7 +167,7 @@ function AppContent() {
         .eq('id', patientId)
         .single();
       if (error || !data) return;
-      setSelectedPatient(data);
+      setSelectedPatient(data as Patient);
       setSelectedDossier(null);
       setCurrentView('patients');
     } catch (e) {
@@ -183,12 +187,12 @@ function AppContent() {
       const { data: patient, error: pErr } = await supabase
         .from('patients')
         .select('*')
-        .eq('id', dossier.patient_id)
+        .eq('id', (dossier as any).patient_id)
         .single();
       if (pErr || !patient) return;
 
-      setSelectedPatient(patient);
-      setSelectedDossier(dossier);
+      setSelectedPatient(patient as Patient);
+      setSelectedDossier(dossier as DossierSoin);
       setCurrentView('patients');
     } catch (e) {
       console.error('Erreur chargement dossier/patient:', e);
@@ -253,8 +257,8 @@ function AppContent() {
           return (
             <EffectifDuJour
               onOpenDossier={(dossier, patient) => {
-                setSelectedPatient(patient);
-                setSelectedDossier(dossier);
+                setSelectedPatient(patient as Patient);
+                setSelectedDossier(dossier as DossierSoin);
                 setCurrentView('patients');
               }}
             />
@@ -264,8 +268,8 @@ function AppContent() {
           return (
             <Planning
               onOpenDossier={(dossier, patient) => {
-                setSelectedPatient(patient);
-                setSelectedDossier(dossier);
+                setSelectedPatient(patient as Patient);
+                setSelectedDossier(dossier as DossierSoin);
                 setCurrentView('patients');
               }}
             />
@@ -312,10 +316,10 @@ function AppContent() {
 
   // ===== Rendu Médecin =====
   const renderMedecin = () => {
-    // Pour l’instant, uniquement la vue RDV vide
+    // Vue par défaut : ‘rdv’
     return (
       <MedecinLayout>
-        {currentView === 'rdv' ? <MedecinRendezVousEmpty /> : <MedecinRendezVousEmpty />}
+        {currentView === 'rdv' ? <RendezVousList /> : <RendezVousList />}
       </MedecinLayout>
     );
   };
