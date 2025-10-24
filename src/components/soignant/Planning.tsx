@@ -6,7 +6,7 @@ import {
   DossierSoin,
   Patient,
   UserBase,
-} from "../lib/supabase";
+} from "../../lib/supabase";
 import { useAuth } from "../contexts/AuthContext";
 import {
   Calendar as CalendarIcon,
