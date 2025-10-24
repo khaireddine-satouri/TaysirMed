@@ -13,9 +13,9 @@ import {
   ChevronRight,
   Clock,
 } from 'lucide-react';
-import { supabase, Patient, DossierSoin, Seance, UserBase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
-import { exportEffectifToExcel } from '../utils/excelExport';
+import { supabase, Patient, DossierSoin, Seance, UserBase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import { exportEffectifToExcel } from '../../utils/excelExport';
 import EditSeanceModal from './EditSeanceModal';
 import ScheduleSeanceModal from './ScheduleSeanceModal';
 import EditScheduledSeanceModal from './EditScheduledSeanceModal';
