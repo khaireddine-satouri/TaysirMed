@@ -1,25 +1,18 @@
+// src/components/layouts/SoignantLayout.tsx
 import { ReactNode, useEffect, useState } from 'react';
-import { Send, Inbox, Bell, LogOut, Users, FileText, Calendar, Settings, BarChart3, CalendarRange, X } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
-import { useNewTicketsIndicator } from '../hooks/useNewTicketsIndicator';
+import {
+  Send, Inbox, Bell, LogOut, Users, FileText,
+  Calendar, Settings, BarChart3, CalendarRange, X
+} from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
+import { useNewTicketsIndicator } from '../../hooks/useNewTicketsIndicator';
 
 interface SoignantLayoutProps {
   children: ReactNode;
   currentView: string;
   onNavigate: (view: string) => void;
-
-  /** Titre dynamique (ex. "Cabinet Nom Prénom") */
   clinicName?: string;
-
-  /**
-   * Affiche la charte si true (optionnel). Le Layout n’impose aucune logique :
-   * - onAcceptCharter est appelé si l’utilisateur accepte.
-   * - onRefuseCharter est appelé si l’utilisateur refuse.
-   *
-   * Si tu veux “désactiver” des actions tant que la charte n’est pas acceptée,
-   * fais-le dans les composants enfants, via un état que tu gères dans App.
-   */
   showCharter?: boolean;
   onAcceptCharter?: () => void;
   onRefuseCharter?: () => void;
@@ -40,18 +33,12 @@ export default function SoignantLayout({
   const isAdmin = userBase?.type_utilisateur === 'admin';
   const clientId = userBase?.client_id ?? null;
 
-  // true  -> il existe au moins un assistant pour ce client
-  // false -> aucun assistant trouvé
-  // null  -> inconnu (chargement)
   const [hasAssistants, setHasAssistants] = useState<boolean | null>(null);
-
-  // --- Compteur de nouveaux tickets pour l'admin (du jour) ---
-  const { count: newTicketsCount, markAsSeen /*, refresh*/ } = useNewTicketsIndicator(clientId, isAdmin);
+  const { count: newTicketsCount, markAsSeen } = useNewTicketsIndicator(clientId, isAdmin);
   const showTicketsUI = isAdmin && hasAssistants === true;
 
   useEffect(() => {
     let cancelled = false;
-
     const checkAssistants = async () => {
       if (!isAdmin || !clientId) {
         setHasAssistants(null);
@@ -79,21 +66,16 @@ export default function SoignantLayout({
         }
       }
     };
-
     checkAssistants();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [isAdmin, clientId]);
 
-  // Si l’admin n’a pas d’assistants et qu’on est sur l’onglet “tickets_admin”, on renvoie vers Analyse
   useEffect(() => {
     if (isAdmin && hasAssistants === false && currentView === 'tickets_admin') {
       onNavigate('analyse');
     }
   }, [isAdmin, hasAssistants, currentView, onNavigate]);
 
-  // Quand on arrive déjà sur la page tickets_admin, purge le badge
   useEffect(() => {
     if (showTicketsUI && currentView === 'tickets_admin') {
       markAsSeen();
@@ -116,7 +98,6 @@ export default function SoignantLayout({
 
   const goTicketsAdmin = async () => {
     if (!showTicketsUI) return;
-    // on purge le compteur puis on navigue
     await markAsSeen();
     onNavigate('tickets_admin');
   };
@@ -132,13 +113,12 @@ export default function SoignantLayout({
             </h1>
 
             <div className="flex items-center gap-3">
-              {/* Cloche de notifications (admin + a des assistants) */}
               {showTicketsUI && (
                 <button
                   type="button"
                   onClick={goTicketsAdmin}
                   aria-label="Tickets collaborateurs"
-                  className="relative p-3 sm:p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition active:scale-[0.98] touch-manipulation"
+                  className="relative p-3 sm:p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition active:scale-[0.98]"
                   title="Tickets collaborateurs"
                 >
                   <Bell className="w-6 h-6 sm:w-5 sm:h-5" />
@@ -163,7 +143,7 @@ export default function SoignantLayout({
                 type="button"
                 onClick={handleSignOut}
                 aria-label="Déconnexion"
-                className="p-3 sm:p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition active:scale-[0.98] touch-manipulation"
+                className="p-3 sm:p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition active:scale-[0.98]"
                 title="Déconnexion"
               >
                 <LogOut className="w-6 h-6 sm:w-5 sm:h-5" />
@@ -177,75 +157,60 @@ export default function SoignantLayout({
       <nav className="bg-white border-b border-gray-200 overflow-x-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex space-x-1 py-2">
-            {/* Analyse (admin) */}
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => onNavigate('analyse')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'analyse'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-                title="Indicateurs & statistiques"
-              >
-                <BarChart3 className="w-4 h-4" />
-                Analyse
-              </button>
+            {userBase?.type_utilisateur === 'admin' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('analyse')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
+                    currentView === 'analyse' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                  title="Indicateurs & statistiques"
+                >
+                  <BarChart3 className="w-4 h-4" />
+                  Analyse
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onNavigate('dashboard')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
+                    currentView === 'dashboard' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <FileText className="w-4 h-4" />
+                  Tableau de bord
+                </button>
+              </>
             )}
 
-            {/* Dashboard (admin) */}
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => onNavigate('dashboard')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'dashboard'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <FileText className="w-4 h-4" />
-                Tableau de bord
-              </button>
-            )}
-
-            {/* Patients (tous) */}
             <button
               type="button"
               onClick={() => onNavigate('patients')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                currentView === 'patients'
-                  ? 'bg-teal-50 text-teal-700'
-                  : 'text-gray-600 hover:bg-gray-50'
+                currentView === 'patients' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
               <Users className="w-4 h-4" />
               Patients
             </button>
 
-            {/* Effectif du jour (tous) */}
             <button
               type="button"
               onClick={() => onNavigate('effectif')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                currentView === 'effectif'
-                  ? 'bg-teal-50 text-teal-700'
-                  : 'text-gray-600 hover:bg-gray-50'
+                currentView === 'effectif' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
               <Calendar className="w-4 h-4" />
               Séances du jour
             </button>
 
-            {/* Planning (tous) */}
             <button
               type="button"
               onClick={() => onNavigate('planning')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                currentView === 'planning'
-                  ? 'bg-teal-50 text-teal-700'
-                  : 'text-gray-600 hover:bg-gray-50'
+                currentView === 'planning' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
               }`}
               title="Agenda par heure"
             >
@@ -253,15 +218,12 @@ export default function SoignantLayout({
               Planning
             </button>
 
-            {/* Tickets collaborateur (assistants) */}
-            {!isAdmin && (
+            {userBase?.type_utilisateur !== 'admin' && (
               <button
                 type="button"
                 onClick={() => onNavigate('tickets_collab')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'tickets_collab'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'text-gray-600 hover:bg-gray-50'
+                  currentView === 'tickets_collab' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
                 <Send className="w-4 h-4" />
@@ -269,21 +231,16 @@ export default function SoignantLayout({
               </button>
             )}
 
-            {/* Tickets collaborateurs (admin) — visible uniquement s’il y a des assistants) */}
             {showTicketsUI && (
               <button
                 type="button"
                 onClick={goTicketsAdmin}
                 className={`relative flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'tickets_admin'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'text-gray-600 hover:bg-gray-50'
+                  currentView === 'tickets_admin' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
                 <Inbox className="w-4 h-4" />
                 <span>Tickets staff</span>
-
-                {/* Badge mini dans l’onglet */}
                 {newTicketsCount > 0 && (
                   <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px]">
                     {newTicketsCount > 99 ? '99+' : newTicketsCount}
@@ -292,15 +249,12 @@ export default function SoignantLayout({
               </button>
             )}
 
-            {/* Paramètres (admin) */}
-            {isAdmin && (
+            {userBase?.type_utilisateur === 'admin' && (
               <button
                 type="button"
                 onClick={() => onNavigate('settings')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition whitespace-nowrap ${
-                  currentView === 'settings'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'text-gray-600 hover:bg-gray-50'
+                  currentView === 'settings' ? 'bg-teal-50 text-teal-700' : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
                 <Settings className="w-4 h-4" />
@@ -316,7 +270,7 @@ export default function SoignantLayout({
         {children}
       </main>
 
-      {/* ----- Modal de Charte (optionnel) ----- */}
+      {/* Modal Charte (optionnel) */}
       {showCharter && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white w-full max-w-2xl rounded-xl shadow-xl border">
@@ -334,10 +288,8 @@ export default function SoignantLayout({
             </div>
 
             <div className="p-4 space-y-4">
-              {/* Laisse vide pour l’instant comme demandé */}
-              <div className="prose prose-sm max-w-none text-gray-700">
-                {/* Texte de la charte à insérer plus tard */}
-              </div>
+              {/* Texte à compléter plus tard */}
+              <div className="prose prose-sm max-w-none text-gray-700" />
             </div>
 
             <div className="flex items-center justify-end gap-3 p-4 border-t">
