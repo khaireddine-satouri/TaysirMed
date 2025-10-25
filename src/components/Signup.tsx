@@ -153,7 +153,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
                     name="type_client"
                     checked={typeClient === "medecin"}
                     onChange={() => setTypeClient("medecin")}
-                    className="mt-1"
+                    className="mt-1 accent-teal-600"
                   />
                   <span>
                     <span className="font-medium">Médecin</span>
