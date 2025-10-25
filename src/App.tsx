@@ -63,12 +63,25 @@ function AppContent() {
   const isAdmin = userBase?.type_utilisateur === "admin";
   const isAssistant = userBase?.type_utilisateur === "assistant";
 
-  // détection des liens d'invitation/récupération
+  // détection et gestion des liens d'invitation / récupération
   const [authType, setAuthType] = useState<"invite" | "recovery" | null>(null);
   useEffect(() => {
     const h = parseHash();
     const t = (h["type"] as "invite" | "recovery" | undefined) || null;
-    if (t === "invite" || t === "recovery") setAuthType(t);
+
+    const access_token = h["access_token"];
+    const refresh_token = h["refresh_token"];
+
+    if (access_token && refresh_token) {
+      supabase.auth
+        .setSession({ access_token, refresh_token })
+        .then(() => {
+          if (t === "invite" || t === "recovery") setAuthType(t);
+        })
+        .catch((err) => console.error("Erreur setSession:", err));
+    } else {
+      if (t === "invite" || t === "recovery") setAuthType(t);
+    }
   }, []);
 
   // vue par défaut soignant
