@@ -1,5 +1,12 @@
 // src/contexts/AuthContext.tsx
-import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  ReactNode,
+} from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase, type UserBase } from "../lib/supabase";
 
@@ -32,8 +39,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userBase, setUserBase] = useState<UserBase | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // --- utilitaire: parser le hash d’URL
+  function parseHash(): Record<string, string> {
+    if (typeof window === "undefined") return {};
+    const raw = window.location.hash.startsWith("#")
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const params = new URLSearchParams(raw);
+    const out: Record<string, string> = {};
+    params.forEach((v, k) => (out[k] = v));
+    return out;
+  }
+
   useEffect(() => {
     const init = async () => {
+      // 🔑 Étape 1: vérifier si on a reçu des tokens (invite / recovery)
+      const h = parseHash();
+      const access_token = h["access_token"];
+      const refresh_token = h["refresh_token"];
+
+      if (access_token && refresh_token) {
+        // setSession manuellement (important pour le flux d’invitation)
+        const { data, error } = await supabase.auth.setSession({
+          access_token,
+          refresh_token,
+        });
+        if (!error) {
+          setSession(data.session ?? null);
+          if (data.session?.user) {
+            await loadUserBase(data.session.user.id);
+          }
+          // ⚡ nettoyer le hash pour éviter que ça rejoue
+          window.history.replaceState({}, "", window.location.pathname);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // 🔑 Étape 2: cas normal (pas de hash → session persistée)
       const { data } = await supabase.auth.getSession();
       setSession(data.session ?? null);
       if (data.session?.user) {
@@ -41,8 +84,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setLoading(false);
     };
+
     init();
 
+    // 🔑 Étape 3: écouter les changements d’état
     const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
       setSession(sess);
       if (!sess?.user) {
@@ -51,13 +96,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loadUserBase(sess.user.id);
       }
     });
+
     return () => sub.subscription.unsubscribe();
   }, []);
 
   const loadUserBase = async (uid: string) => {
     const { data } = await supabase
       .from("users_base")
-      .select("id, nom, prenom, type_utilisateur, type_client, client_id, created_at, updated_at")
+      .select(
+        "id, nom, prenom, type_utilisateur, type_client, client_id, created_at, updated_at"
+      )
       .eq("id", uid)
       .maybeSingle();
 
@@ -65,7 +113,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signIn = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
     if (error) throw error;
 
     // Vérifier si le client est actif
@@ -113,7 +164,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [session, userBase, loading]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  );
 }
 
 export const useAuth = () => useContext(AuthContext);
