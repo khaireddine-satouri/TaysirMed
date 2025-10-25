@@ -49,7 +49,7 @@ export default function Settings() {
   const [inviteRole, setInviteRole] = useState<"assistant" | "secretaire">(
     "assistant"
   );
-  const [inviteMessage, setInviteMessage] = useState("");
+  const [inviteMessage, setInviteMessage] = useState<JSX.Element | string>("");
   const [inviteLoading, setInviteLoading] = useState(false);
 
   useEffect(() => {
@@ -60,6 +60,7 @@ export default function Settings() {
 
   const loadSettings = async () => {
     try {
+      // jours_inactivite
       const { data: inact, error: e1 } = await supabase
         .from("app_settings")
         .select("valeur")
@@ -69,6 +70,7 @@ export default function Settings() {
       if (e1) throw e1;
       if (inact?.valeur) setJoursInactivite(inact.valeur);
 
+      // dashboard_default_filters (JSON)
       const { data: dash, error: e2 } = await supabase
         .from("app_settings")
         .select("valeur")
@@ -95,6 +97,7 @@ export default function Settings() {
     setMessage("");
 
     try {
+      // 1) jours_inactivite
       const { error: e1 } = await supabase.from("app_settings").upsert(
         {
           client_id: clientId,
@@ -105,6 +108,7 @@ export default function Settings() {
       );
       if (e1) throw e1;
 
+      // 2) dashboard_default_filters
       const { error: e2 } = await supabase.from("app_settings").upsert(
         {
           client_id: clientId,
@@ -143,17 +147,42 @@ export default function Settings() {
       });
 
       if (error) throw error;
-      setInviteMessage(
-        `Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
-      );
-      setInviteNom("");
-      setInvitePrenom("");
-      setInviteEmail("");
-      setInviteRole("assistant");
+
+      if (data?.status === "already_exists") {
+        setInviteMessage(`⚠️ L'adresse ${inviteEmail} correspond déjà à un compte existant.`);
+      } else if (data?.status === "already_invited") {
+        setInviteMessage(`⚠️ Une invitation est déjà en attente pour ${inviteEmail}.`);
+      } else if (data?.status === "success") {
+        setInviteMessage(
+          `✅ Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
+        );
+        setInviteNom("");
+        setInvitePrenom("");
+        setInviteEmail("");
+        setInviteRole("assistant");
+      } else {
+        setInviteMessage(
+          <>
+            ❌ Erreur lors de l’envoi de l’invitation. Vérifiez si la personne concernée a déjà
+            reçu une invitation et si besoin contactez le{" "}
+            <a href="mailto:support@taysirmed.tn" className="text-teal-600 underline">
+              support
+            </a>
+            .
+          </>
+        );
+      }
     } catch (err: any) {
       console.error("Erreur invitation:", err);
       setInviteMessage(
-        'Erreur lors de l’envoi de l’invitation. Vérifiez si la personne concernée a déjà reçu une invitation. Si besoin, contactez le support : <a href="mailto:support@taysirmed.tn" class="text-teal-600 underline">support@taysirmed.tn</a>'
+        <>
+          ❌ Erreur lors de l’envoi de l’invitation. Vérifiez si la personne concernée a déjà
+          reçu une invitation et si besoin contactez le{" "}
+          <a href="mailto:support@taysirmed.tn" className="text-teal-600 underline">
+            support
+          </a>
+          .
+        </>
       );
     } finally {
       setInviteLoading(false);
@@ -172,8 +201,7 @@ export default function Settings() {
 
         {!isAdmin && (
           <div className="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 mb-6">
-            Accès en lecture seule — seuls les administrateurs peuvent modifier
-            ces paramètres.
+            Accès en lecture seule — seuls les administrateurs peuvent modifier ces paramètres.
           </div>
         )}
 
@@ -214,9 +242,7 @@ export default function Settings() {
               />
               <select
                 value={inviteRole}
-                onChange={(e) =>
-                  setInviteRole(e.target.value as "assistant" | "secretaire")
-                }
+                onChange={(e) => setInviteRole(e.target.value as "assistant" | "secretaire")}
                 className="px-4 py-2 border rounded-lg"
               >
                 <option value="assistant">Assistant</option>
@@ -231,10 +257,7 @@ export default function Settings() {
               </button>
             </form>
             {inviteMessage && (
-              <div
-                className="text-sm text-gray-700"
-                dangerouslySetInnerHTML={{ __html: inviteMessage }}
-              />
+              <div className="text-sm text-gray-700">{inviteMessage}</div>
             )}
           </div>
         )}
@@ -245,8 +268,8 @@ export default function Settings() {
             Jours d'inactivité
           </label>
           <p className="text-sm text-gray-600">
-            Nombre de jours écoulés depuis la dernière séance avant qu’un dossier
-            en cours soit considéré comme inactif.
+            Nombre de jours écoulés depuis la dernière séance avant qu’un dossier en cours soit
+            considéré comme inactif.
           </p>
           <input
             type="number"
@@ -267,9 +290,7 @@ export default function Settings() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* État */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                État
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">État</label>
               <select
                 value={dashDefaultFilters.etat}
                 onChange={(e) =>
@@ -290,9 +311,7 @@ export default function Settings() {
 
             {/* PEC Assurance */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                PEC Assurance
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">PEC Assurance</label>
               <select
                 value={dashDefaultFilters.pec}
                 onChange={(e) =>
@@ -312,9 +331,7 @@ export default function Settings() {
 
             {/* État PEC */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                État PEC
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">État PEC</label>
               <select
                 value={dashDefaultFilters.etatPec}
                 onChange={(e) =>
@@ -334,9 +351,7 @@ export default function Settings() {
 
             {/* Paiement */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Paiement
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Paiement</label>
               <select
                 value={dashDefaultFilters.paiement}
                 onChange={(e) =>
@@ -356,9 +371,7 @@ export default function Settings() {
 
             {/* Activité */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Activité
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Activité</label>
               <select
                 value={dashDefaultFilters.activite}
                 onChange={(e) =>
@@ -378,9 +391,7 @@ export default function Settings() {
 
             {/* Date début */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Date début
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Date début</label>
               <input
                 type="date"
                 value={dashDefaultFilters.dateDebut}
@@ -397,9 +408,7 @@ export default function Settings() {
 
             {/* Date fin */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Date fin
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Date fin</label>
               <input
                 type="date"
                 value={dashDefaultFilters.dateFin}
