@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { supabase, PatientCipher as Patient } from "../../lib/supabase";
 import { Search, Plus, User, Phone, X, Trash2 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
-import * as CryptoBox from "../../crypto/CryptoBox";
+import * as EncryptionService from "../../crypto/EncryptionService";
 import * as KeyService from "../../crypto/KeyService";
 
 /** Vue claire utilisée seulement côté UI (jamais envoyée au backend) */
@@ -125,11 +125,11 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
       // Déchiffrement côté client
       const views: PatientView[] = await Promise.all(
         (data || []).map(async (row: Patient) => {
-          const nom = await CryptoBox.decryptString(dek, row.nom_ct);
-          const prenom = await CryptoBox.decryptString(dek, row.prenom_ct);
-          const telephone = await CryptoBox.decryptString(dek, row.telephone_ct);
+          const nom = await EncryptionService.decryptString(dek, row.nom_ct);
+          const prenom = await EncryptionService.decryptString(dek, row.prenom_ct);
+          const telephone = await EncryptionService.decryptString(dek, row.telephone_ct);
           const telephone_2 = row.telephone2_ct
-            ? await CryptoBox.decryptString(dek, row.telephone2_ct)
+            ? await EncryptionService.decryptString(dek, row.telephone2_ct)
             : null;
 
           return {
@@ -338,11 +338,11 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
       const dek = await KeyService.getDEK();
       if (!dek) throw new Error("Coffre non déverrouillé. Veuillez réessayer.");
 
-      const nom_ct = await CryptoBox.encryptString(dek, nom.trim());
-      const prenom_ct = await CryptoBox.encryptString(dek, prenom.trim());
-      const telephone_ct = await CryptoBox.encryptString(dek, telephone.trim());
+      const nom_ct = await EncryptionService.encryptString(dek, nom.trim());
+      const prenom_ct = await EncryptionService.encryptString(dek, prenom.trim());
+      const telephone_ct = await EncryptionService.encryptString(dek, telephone.trim());
       const telephone2_ct = telephone2.trim()
-        ? await CryptoBox.encryptString(dek, telephone2.trim())
+        ? await EncryptionService.encryptString(dek, telephone2.trim())
         : null;
 
       const { error: insertError } = await supabase.from("patients").insert({
