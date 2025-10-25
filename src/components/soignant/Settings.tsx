@@ -154,7 +154,7 @@ export default function Settings() {
         setInviteMessage(`⚠️ Une invitation est déjà en attente pour ${inviteEmail}.`);
       } else if (data?.status === "success") {
         setInviteMessage(
-          `✅ Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
+          `✅ Une invitation a été envoyée à ${inviteEmail}. La personne concernée pourra créer son mot de passe et rejoindre votre équipe.`
         );
         setInviteNom("");
         setInvitePrenom("");
