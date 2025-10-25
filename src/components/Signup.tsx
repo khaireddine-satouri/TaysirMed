@@ -64,7 +64,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
               <Stethoscope className="w-8 h-8 text-teal-600" />
             </div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Création de compte</h1>
-            <p className="text-gray-600">Commencez à gérer votre cabinet en quelques secondes</p>
+            <p className="text-gray-400">Commencez à gérer votre cabinet en quelques secondes</p>
           </div>
 
           {/* Form */}
