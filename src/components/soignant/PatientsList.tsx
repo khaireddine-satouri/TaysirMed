@@ -3,7 +3,7 @@ import { supabase, PatientCipher as Patient } from "../../lib/supabase";
 import { Search, Plus, User, Phone, X, Trash2 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import * as EncryptionService from "../../crypto/EncryptionService";
-import { KeyService } from "../../crypto/KeyService";
+import * as KeyService from "../../crypto/KeyService";
 
 /** Conversion générique pour bytea retourné par Supabase:
  * - PostgREST renvoie souvent des strings hexadécimales: "\\x...."
