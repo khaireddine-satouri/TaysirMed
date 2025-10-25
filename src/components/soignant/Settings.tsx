@@ -1,8 +1,19 @@
 // src/components/soignant/Settings.tsx
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { Save, Settings as SettingsIcon, UserPlus } from "lucide-react";
+import {
+  Save,
+  Settings as SettingsIcon,
+  UserPlus,
+  Users,
+  Edit3,
+  Check,
+  X,
+  Trash2,
+} from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
+
+/* ========================= Types / constantes ========================= */
 
 type DashFilters = {
   etat: "all" | "a_venir" | "en_cours" | "termine";
@@ -28,36 +39,63 @@ const FALLBACK_DASH_FILTERS: DashFilters = {
   motifSearch: "",
 };
 
+type Member = {
+  id: string;
+  nom: string;
+  prenom: string;
+  type_utilisateur: "admin" | "assistant" | "secretaire";
+  type_client: "soignant" | "medecin";
+  client_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/* =============================== UI =============================== */
+
 export default function Settings() {
   const { userBase } = useAuth();
   const clientId = userBase?.client_id;
+  const isAdmin = userBase?.type_utilisateur === "admin";
 
+  // --- App settings ---
   const [joursInactivite, setJoursInactivite] = useState("4");
-  const [dashDefaultFilters, setDashDefaultFilters] = useState<DashFilters>(
-    FALLBACK_DASH_FILTERS
-  );
-
+  const [dashDefaultFilters, setDashDefaultFilters] =
+    useState<DashFilters>(FALLBACK_DASH_FILTERS);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-
-  const isAdmin = userBase?.type_utilisateur === "admin";
 
   // --- Invitation collaborateur ---
   const [inviteNom, setInviteNom] = useState("");
   const [invitePrenom, setInvitePrenom] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"assistant" | "secretaire">(
-    "assistant"
-  );
+  const [inviteRole, setInviteRole] =
+    useState<"assistant" | "secretaire">("assistant");
   const [inviteMessage, setInviteMessage] = useState<JSX.Element | string>("");
   const [inviteLoading, setInviteLoading] = useState(false);
+
+  // --- Members list / edit / delete ---
+  const [members, setMembers] = useState<Member[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editNom, setEditNom] = useState("");
+  const [editPrenom, setEditPrenom] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  const [userToDelete, setUserToDelete] = useState<Member | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     if (clientId && isAdmin) {
       loadSettings();
+      loadMembers();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, isAdmin]);
 
+  /* ---------------------- Load App settings ---------------------- */
   const loadSettings = async () => {
     try {
       // jours_inactivite
@@ -91,6 +129,7 @@ export default function Settings() {
     }
   };
 
+  /* ---------------------- Save App settings ---------------------- */
   const saveAll = async () => {
     if (!clientId) return;
     setLoading(true);
@@ -129,6 +168,7 @@ export default function Settings() {
     }
   };
 
+  /* ---------------------- Invitation ---------------------- */
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     setInviteMessage("");
@@ -160,13 +200,15 @@ export default function Settings() {
         setInvitePrenom("");
         setInviteEmail("");
         setInviteRole("assistant");
+        // rafraîchir la liste des membres après l’invite (utile si users_base est déjà upsert par l’EF)
+        loadMembers();
       } else {
         setInviteMessage(
           <>
             ❌ Erreur lors de l’envoi de l’invitation. Vérifiez si la personne concernée a déjà
             reçu une invitation et si besoin contactez le{" "}
             <a href="mailto:support@taysirmed.tn" className="text-teal-600 underline">
-              support
+              support@taysirmed.tn
             </a>
             .
           </>
@@ -179,7 +221,7 @@ export default function Settings() {
           ❌ Erreur lors de l’envoi de l’invitation. Vérifiez si la personne concernée a déjà
           reçu une invitation et si besoin contactez le{" "}
           <a href="mailto:support@taysirmed.tn" className="text-teal-600 underline">
-            support
+            support@taysirmed.tn
           </a>
           .
         </>
@@ -188,6 +230,116 @@ export default function Settings() {
       setInviteLoading(false);
     }
   };
+
+  /* ---------------------- Members: list / edit / delete ---------------------- */
+
+  const loadMembers = async () => {
+    if (!clientId) return;
+    setLoadingMembers(true);
+    try {
+      const { data, error } = await supabase
+        .from("users_base")
+        .select(
+          "id, nom, prenom, type_utilisateur, type_client, client_id, created_at, updated_at"
+        )
+        .eq("client_id", clientId)
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+      setMembers((data || []) as Member[]);
+    } catch (e) {
+      console.error("Erreur chargement membres:", e);
+    } finally {
+      setLoadingMembers(false);
+    }
+  };
+
+  const startEdit = (m: Member) => {
+    setEditingId(m.id);
+    setEditNom(m.nom || "");
+    setEditPrenom(m.prenom || "");
+    setEditError("");
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditNom("");
+    setEditPrenom("");
+    setEditError("");
+  };
+
+  const saveEdit = async () => {
+    if (!editingId) return;
+    if (!editNom.trim() || !editPrenom.trim()) {
+      setEditError("Nom et prénom sont obligatoires.");
+      return;
+    }
+    setEditSaving(true);
+    setEditError("");
+
+    try {
+      const { error } = await supabase
+        .from("users_base")
+        .update({
+          nom: editNom.trim(),
+          prenom: editPrenom.trim(),
+        })
+        .eq("id", editingId);
+      if (error) throw error;
+
+      // MAJ locale
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.id === editingId ? { ...m, nom: editNom.trim(), prenom: editPrenom.trim() } : m
+        )
+      );
+
+      cancelEdit();
+    } catch (e: any) {
+      console.error("Erreur édition membre:", e);
+      setEditError(e?.message || "Erreur lors de la mise à jour.");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    setDeleting(true);
+    setDeleteError("");
+
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) {
+        setDeleteError("Session expirée. Veuillez vous reconnecter.");
+        setDeleting(false);
+        return;
+      }
+
+      const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-user`;
+      const res = await fetch(fnUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ userId: userToDelete.id }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Suppression impossible");
+
+      setUserToDelete(null);
+      await loadMembers();
+    } catch (err: any) {
+      console.error("Erreur suppression membre:", err);
+      setDeleteError(err.message || "La suppression a échoué.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  /* ---------------------- Helpers ---------------------- */
 
   const disabled = useMemo(() => !isAdmin, [isAdmin]);
 
@@ -262,6 +414,128 @@ export default function Settings() {
           </div>
         )}
 
+        {/* === Section Membres (admin) === */}
+        {isAdmin && (
+          <div className="mb-10">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <Users className="w-5 h-5 text-teal-600" />
+              Membres de l’équipe
+            </h3>
+
+            {loadingMembers ? (
+              <div className="text-gray-500">Chargement…</div>
+            ) : members.length === 0 ? (
+              <div className="text-gray-500">Aucun membre pour le moment.</div>
+            ) : (
+              <div className="space-y-2">
+                {members.map((m) => {
+                  const isEditing = editingId === m.id;
+                  return (
+                    <div
+                      key={m.id}
+                      className="flex items-center justify-between bg-gray-50 px-4 py-2 rounded-lg"
+                    >
+                      <div className="flex-1 min-w-0">
+                        {!isEditing ? (
+                          <>
+                            <div className="font-semibold text-gray-900 truncate">
+                              {m.prenom} {m.nom}
+                              {m.id === userBase?.id && (
+                                <span className="ml-2 text-xs text-gray-500">(vous)</span>
+                              )}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              Rôle : {m.type_utilisateur}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <input
+                              type="text"
+                              value={editPrenom}
+                              onChange={(e) => setEditPrenom(e.target.value)}
+                              className="px-3 py-2 border rounded-lg w-full sm:w-48"
+                              placeholder="Prénom"
+                            />
+                            <input
+                              type="text"
+                              value={editNom}
+                              onChange={(e) => setEditNom(e.target.value)}
+                              className="px-3 py-2 border rounded-lg w-full sm:w-48"
+                              placeholder="Nom"
+                            />
+                            {editError && (
+                              <div className="text-sm text-red-600">{editError}</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 ml-4">
+                        {!isEditing ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => startEdit(m)}
+                              className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition"
+                              title="Modifier nom/prénom"
+                            >
+                              <Edit3 className="w-5 h-5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setUserToDelete(m)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                              title="Supprimer le membre"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={saveEdit}
+                              disabled={editSaving}
+                              className="p-2 text-teal-700 hover:bg-teal-50 rounded-lg transition disabled:opacity-50"
+                              title="Enregistrer"
+                            >
+                              <Check className="w-5 h-5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelEdit}
+                              disabled={editSaving}
+                              className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition disabled:opacity-50"
+                              title="Annuler"
+                            >
+                              <X className="w-5 h-5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Modal de confirmation suppression */}
+            {userToDelete && (
+              <ConfirmDeleteUserModal
+                user={userToDelete}
+                loading={deleting}
+                error={deleteError}
+                onCancel={() => {
+                  setDeleteError("");
+                  setUserToDelete(null);
+                }}
+                onConfirm={handleDeleteUser}
+              />
+            )}
+          </div>
+        )}
+
         {/* === Jours d'inactivité === */}
         <div className="space-y-2 mb-8">
           <label className="block text-sm font-medium text-gray-700">
@@ -280,68 +554,6 @@ export default function Settings() {
             className="w-full max-w-xs px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-50"
           />
         </div>
-
-        {/*Update or delete member*/}
-        function ConfirmDeleteUserModal({
-  user,
-  loading,
-  error,
-  onCancel,
-  onConfirm,
-}: {
-  user: any;
-  loading: boolean;
-  error?: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-lg rounded-xl shadow p-6 space-y-5">
-        <div className="flex items-start gap-3">
-          <div className="p-2 rounded-lg bg-red-50 text-red-600">
-            <Trash2 className="w-5 h-5" />
-          </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-900">Confirmer la suppression</h3>
-            <p className="text-sm text-gray-700 mt-1">
-              Vous êtes sur le point de supprimer le membre{" "}
-              <span className="font-semibold">
-                {user.prenom} {user.nom}
-              </span>. 
-              <br />
-              <span className="font-medium">Cette opération est irréversible.</span>
-            </p>
-            {error && (
-              <div className="mt-3 text-sm bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2">
-                {error}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={loading}
-            className="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 transition disabled:opacity-50"
-          >
-            Annuler
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={loading}
-            className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition disabled:opacity-50"
-          >
-            {loading ? 'Suppression…' : 'Supprimer'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
         {/* === Filtres par défaut === */}
         <div className="space-y-4">
@@ -505,6 +717,70 @@ export default function Settings() {
           >
             <Save className="w-5 h-5" />
             {loading ? "Enregistrement…" : "Enregistrer"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== Modal Confirmation Suppression Membre ===================== */
+
+function ConfirmDeleteUserModal({
+  user,
+  loading,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  user: Member;
+  loading: boolean;
+  error?: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-lg rounded-xl shadow p-6 space-y-5">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-lg bg-red-50 text-red-600">
+            <Trash2 className="w-5 h-5" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-900">Confirmer la suppression</h3>
+            <p className="text-sm text-gray-700 mt-1">
+              Vous êtes sur le point de supprimer le membre{" "}
+              <span className="font-semibold">
+                {user.prenom} {user.nom}
+              </span>
+              . Cette action supprimera définitivement son accès à l’application.
+              <br />
+              <span className="font-medium">Cette opération est irréversible.</span>
+            </p>
+            {error && (
+              <div className="mt-3 text-sm bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2">
+                {error}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 transition disabled:opacity-50"
+          >
+            Annuler
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition disabled:opacity-50"
+          >
+            {loading ? "Suppression…" : "Supprimer"}
           </button>
         </div>
       </div>
