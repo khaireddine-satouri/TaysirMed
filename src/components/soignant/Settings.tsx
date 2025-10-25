@@ -1,19 +1,20 @@
 // src/components/soignant/Settings.tsx
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../../lib/supabase";
+import { useState, useEffect, useMemo } from "react";
+import { supabase, type UserBase } from "../../lib/supabase";
 import {
   Save,
   Settings as SettingsIcon,
   UserPlus,
   Users,
   Edit3,
+  Trash2,
   Check,
   X,
-  Trash2,
+  Mail
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 
-/* ========================= Types / constantes ========================= */
+/* ================== Types & Defaults ================== */
 
 type DashFilters = {
   etat: "all" | "a_venir" | "en_cours" | "termine";
@@ -39,50 +40,45 @@ const FALLBACK_DASH_FILTERS: DashFilters = {
   motifSearch: "",
 };
 
-type Member = {
-  id: string;
-  nom: string;
-  prenom: string;
-  type_utilisateur: "admin" | "assistant" | "secretaire";
-  type_client: "soignant" | "medecin";
-  client_id: string | null;
-  created_at: string;
-  updated_at: string;
-};
+type Member = Pick<
+  UserBase,
+  "id" | "nom" | "prenom" | "type_utilisateur" | "type_client" | "client_id" | "created_at"
+>;
 
-/* =============================== UI =============================== */
+/* ================== Component ================== */
 
 export default function Settings() {
   const { userBase } = useAuth();
   const clientId = userBase?.client_id;
   const isAdmin = userBase?.type_utilisateur === "admin";
 
-  // --- App settings ---
+  /* ---- App settings ---- */
   const [joursInactivite, setJoursInactivite] = useState("4");
-  const [dashDefaultFilters, setDashDefaultFilters] =
-    useState<DashFilters>(FALLBACK_DASH_FILTERS);
+  const [dashDefaultFilters, setDashDefaultFilters] = useState<DashFilters>(FALLBACK_DASH_FILTERS);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  // --- Invitation collaborateur ---
+  /* ---- Invitation ---- */
   const [inviteNom, setInviteNom] = useState("");
   const [invitePrenom, setInvitePrenom] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] =
-    useState<"assistant" | "secretaire">("assistant");
+  const [inviteRole, setInviteRole] = useState<"assistant" | "secretaire">("assistant");
   const [inviteMessage, setInviteMessage] = useState<JSX.Element | string>("");
   const [inviteLoading, setInviteLoading] = useState(false);
 
-  // --- Members list / edit / delete ---
+  /* ---- Members list / edit / delete ---- */
   const [members, setMembers] = useState<Member[]>([]);
-  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState("");
 
+  // Edit inline
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNom, setEditNom] = useState("");
   const [editPrenom, setEditPrenom] = useState("");
   const [editSaving, setEditSaving] = useState(false);
-  const [editError, setEditError] = useState("");
+  const isEditing = (id: string) => editingId === id;
 
+  // Delete modal
   const [userToDelete, setUserToDelete] = useState<Member | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
@@ -95,7 +91,8 @@ export default function Settings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, isAdmin]);
 
-  /* ---------------------- Load App settings ---------------------- */
+  /* ================== Loaders ================== */
+
   const loadSettings = async () => {
     try {
       // jours_inactivite
@@ -108,7 +105,7 @@ export default function Settings() {
       if (e1) throw e1;
       if (inact?.valeur) setJoursInactivite(inact.valeur);
 
-      // dashboard_default_filters (JSON)
+      // dashboard_default_filters
       const { data: dash, error: e2 } = await supabase
         .from("app_settings")
         .select("valeur")
@@ -129,7 +126,28 @@ export default function Settings() {
     }
   };
 
-  /* ---------------------- Save App settings ---------------------- */
+  const loadMembers = async () => {
+    if (!clientId) return;
+    try {
+      setMembersLoading(true);
+      setMembersError("");
+      const { data, error } = await supabase
+        .from("users_base")
+        .select("id, nom, prenom, type_utilisateur, type_client, client_id, created_at")
+        .eq("client_id", clientId)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      setMembers((data || []) as Member[]);
+    } catch (err: any) {
+      console.error("Erreur chargement membres:", err);
+      setMembersError(err.message || "Erreur lors du chargement des membres.");
+    } finally {
+      setMembersLoading(false);
+    }
+  };
+
+  /* ================== Save Settings ================== */
+
   const saveAll = async () => {
     if (!clientId) return;
     setLoading(true);
@@ -168,7 +186,8 @@ export default function Settings() {
     }
   };
 
-  /* ---------------------- Invitation ---------------------- */
+  /* ================== Invite Member ================== */
+
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     setInviteMessage("");
@@ -192,7 +211,7 @@ export default function Settings() {
         setInviteMessage(`⚠️ L'adresse ${inviteEmail} correspond déjà à un compte existant.`);
       } else if (data?.status === "already_invited") {
         setInviteMessage(`⚠️ Une invitation est déjà en attente pour ${inviteEmail}.`);
-      } else if (data?.status === "success") {
+      } else if (data?.status === "success" || data?.ok) {
         setInviteMessage(
           `✅ Une invitation a été envoyée à ${inviteEmail}. La personne concernée pourra créer son mot de passe et rejoindre votre équipe.`
         );
@@ -200,7 +219,7 @@ export default function Settings() {
         setInvitePrenom("");
         setInviteEmail("");
         setInviteRole("assistant");
-        // rafraîchir la liste des membres après l’invite (utile si users_base est déjà upsert par l’EF)
+        // on recharge les membres (au cas où users_base a été upsert)
         loadMembers();
       } else {
         setInviteMessage(
@@ -231,77 +250,39 @@ export default function Settings() {
     }
   };
 
-  /* ---------------------- Members: list / edit / delete ---------------------- */
-
-  const loadMembers = async () => {
-    if (!clientId) return;
-    setLoadingMembers(true);
-    try {
-      const { data, error } = await supabase
-        .from("users_base")
-        .select(
-          "id, nom, prenom, type_utilisateur, type_client, client_id, created_at, updated_at"
-        )
-        .eq("client_id", clientId)
-        .order("created_at", { ascending: true });
-
-      if (error) throw error;
-      setMembers((data || []) as Member[]);
-    } catch (e) {
-      console.error("Erreur chargement membres:", e);
-    } finally {
-      setLoadingMembers(false);
-    }
-  };
+  /* ================== Edit Member ================== */
 
   const startEdit = (m: Member) => {
     setEditingId(m.id);
     setEditNom(m.nom || "");
     setEditPrenom(m.prenom || "");
-    setEditError("");
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setEditNom("");
     setEditPrenom("");
-    setEditError("");
+    setEditSaving(false);
   };
 
   const saveEdit = async () => {
     if (!editingId) return;
-    if (!editNom.trim() || !editPrenom.trim()) {
-      setEditError("Nom et prénom sont obligatoires.");
-      return;
-    }
     setEditSaving(true);
-    setEditError("");
-
     try {
       const { error } = await supabase
         .from("users_base")
-        .update({
-          nom: editNom.trim(),
-          prenom: editPrenom.trim(),
-        })
+        .update({ nom: editNom.trim(), prenom: editPrenom.trim() })
         .eq("id", editingId);
       if (error) throw error;
-
-      // MAJ locale
-      setMembers((prev) =>
-        prev.map((m) =>
-          m.id === editingId ? { ...m, nom: editNom.trim(), prenom: editPrenom.trim() } : m
-        )
-      );
-
       cancelEdit();
-    } catch (e: any) {
-      console.error("Erreur édition membre:", e);
-      setEditError(e?.message || "Erreur lors de la mise à jour.");
-    } finally {
+      await loadMembers();
+    } catch (err) {
+      console.error("Erreur maj membre:", err);
       setEditSaving(false);
     }
   };
+
+  /* ================== Delete Member (Edge Function) ================== */
 
   const handleDeleteUser = async () => {
     if (!userToDelete) return;
@@ -309,6 +290,13 @@ export default function Settings() {
     setDeleteError("");
 
     try {
+      // ne pas tenter de te supprimer toi-même (déjà protégé côté UI)
+      if (userToDelete.id === userBase?.id) {
+        setDeleteError("Vous ne pouvez pas supprimer votre propre compte.");
+        setDeleting(false);
+        return;
+      }
+
       const session = (await supabase.auth.getSession()).data.session;
       if (!session) {
         setDeleteError("Session expirée. Veuillez vous reconnecter.");
@@ -326,8 +314,8 @@ export default function Settings() {
         body: JSON.stringify({ userId: userToDelete.id }),
       });
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Suppression impossible");
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || "Erreur lors de la suppression");
 
       setUserToDelete(null);
       await loadMembers();
@@ -339,9 +327,11 @@ export default function Settings() {
     }
   };
 
-  /* ---------------------- Helpers ---------------------- */
+  /* ================== Derived ================== */
 
   const disabled = useMemo(() => !isAdmin, [isAdmin]);
+
+  /* ================== Render ================== */
 
   return (
     <div className="space-y-6">
@@ -364,10 +354,7 @@ export default function Settings() {
               <UserPlus className="w-5 h-5 text-teal-600" />
               Ajouter un membre
             </h3>
-            <form
-              onSubmit={handleInvite}
-              className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4"
-            >
+            <form onSubmit={handleInvite} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
               <input
                 type="text"
                 placeholder="Nom"
@@ -384,22 +371,27 @@ export default function Settings() {
                 required
                 className="px-4 py-2 border rounded-lg"
               />
-              <input
-                type="email"
-                placeholder="Adresse email"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                required
-                className="px-4 py-2 border rounded-lg md:col-span-2"
-              />
-              <select
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value as "assistant" | "secretaire")}
-                className="px-4 py-2 border rounded-lg"
-              >
-                <option value="assistant">Assistant</option>
-                <option value="secretaire">Secrétaire</option>
-              </select>
+              <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="email"
+                    placeholder="Adresse email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    required
+                    className="w-full pl-10 pr-4 py-2 border rounded-lg"
+                  />
+                </div>
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as "assistant" | "secretaire")}
+                  className="px-4 py-2 border rounded-lg"
+                >
+                  <option value="assistant">Assistant</option>
+                  <option value="secretaire">Secrétaire</option>
+                </select>
+              </div>
               <button
                 type="submit"
                 disabled={inviteLoading}
@@ -408,13 +400,11 @@ export default function Settings() {
                 {inviteLoading ? "Envoi..." : "Envoyer l’invitation"}
               </button>
             </form>
-            {inviteMessage && (
-              <div className="text-sm text-gray-700">{inviteMessage}</div>
-            )}
+            {inviteMessage && <div className="text-sm text-gray-700">{inviteMessage}</div>}
           </div>
         )}
 
-        {/* === Section Membres (admin) === */}
+        {/* === Section Membres === */}
         {isAdmin && (
           <div className="mb-10">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
@@ -422,57 +412,51 @@ export default function Settings() {
               Membres de l’équipe
             </h3>
 
-            {loadingMembers ? (
-              <div className="text-gray-500">Chargement…</div>
+            {membersLoading ? (
+              <div className="py-6 text-gray-500">Chargement…</div>
+            ) : membersError ? (
+              <div className="py-3 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4">
+                {membersError}
+              </div>
             ) : members.length === 0 ? (
-              <div className="text-gray-500">Aucun membre pour le moment.</div>
+              <div className="py-6 text-gray-500">Aucun membre trouvé.</div>
             ) : (
-              <div className="space-y-2">
-                {members.map((m) => {
-                  const isEditing = editingId === m.id;
-                  return (
-                    <div
-                      key={m.id}
-                      className="flex items-center justify-between bg-gray-50 px-4 py-2 rounded-lg"
-                    >
-                      <div className="flex-1 min-w-0">
-                        {!isEditing ? (
-                          <>
-                            <div className="font-semibold text-gray-900 truncate">
-                              {m.prenom} {m.nom}
-                              {m.id === userBase?.id && (
-                                <span className="ml-2 text-xs text-gray-500">(vous)</span>
-                              )}
-                            </div>
-                            <div className="text-sm text-gray-600">
-                              Rôle : {m.type_utilisateur}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="flex flex-col sm:flex-row gap-2">
-                            <input
-                              type="text"
-                              value={editPrenom}
-                              onChange={(e) => setEditPrenom(e.target.value)}
-                              className="px-3 py-2 border rounded-lg w-full sm:w-48"
-                              placeholder="Prénom"
-                            />
-                            <input
-                              type="text"
-                              value={editNom}
-                              onChange={(e) => setEditNom(e.target.value)}
-                              className="px-3 py-2 border rounded-lg w-full sm:w-48"
-                              placeholder="Nom"
-                            />
-                            {editError && (
-                              <div className="text-sm text-red-600">{editError}</div>
-                            )}
-                          </div>
-                        )}
+              <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 overflow-hidden">
+                {members.map((m) => (
+                  <li key={m.id} className="p-4 flex items-center justify-between">
+                    {/* Infos / Edition inline */}
+                    {!isEditing(m.id) ? (
+                      <div className="min-w-0">
+                        <div className="font-medium text-gray-900 truncate">
+                          {m.prenom || "-"} {m.nom || "-"}
+                        </div>
+                        <div className="text-sm text-gray-500 capitalize">
+                          {m.type_utilisateur} • {m.type_client}
+                        </div>
                       </div>
+                    ) : (
+                      <div className="flex flex-col sm:flex-row gap-2 sm:items-center flex-1">
+                        <input
+                          type="text"
+                          value={editPrenom}
+                          onChange={(e) => setEditPrenom(e.target.value)}
+                          className="px-3 py-2 border rounded-lg w-full sm:w-56"
+                          placeholder="Prénom"
+                        />
+                        <input
+                          type="text"
+                          value={editNom}
+                          onChange={(e) => setEditNom(e.target.value)}
+                          className="px-3 py-2 border rounded-lg w-full sm:w-56"
+                          placeholder="Nom"
+                        />
+                      </div>
+                    )}
 
-                      <div className="flex items-center gap-2 ml-4">
-                        {!isEditing ? (
+                    {/* Actions (cachées pour le user connecté) */}
+                    <div className="flex items-center gap-2 ml-4">
+                      {m.id !== userBase?.id && (
+                        !isEditing(m.id) ? (
                           <>
                             <button
                               type="button"
@@ -512,35 +496,19 @@ export default function Settings() {
                               <X className="w-5 h-5" />
                             </button>
                           </>
-                        )}
-                      </div>
+                        )
+                      )}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Modal de confirmation suppression */}
-            {userToDelete && (
-              <ConfirmDeleteUserModal
-                user={userToDelete}
-                loading={deleting}
-                error={deleteError}
-                onCancel={() => {
-                  setDeleteError("");
-                  setUserToDelete(null);
-                }}
-                onConfirm={handleDeleteUser}
-              />
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         )}
 
         {/* === Jours d'inactivité === */}
         <div className="space-y-2 mb-8">
-          <label className="block text-sm font-medium text-gray-700">
-            Jours d'inactivité
-          </label>
+          <label className="block text-sm font-medium text-gray-700">Jours d'inactivité</label>
           <p className="text-sm text-gray-600">
             Nombre de jours écoulés depuis la dernière séance avant qu’un dossier en cours soit
             considéré comme inactif.
@@ -568,10 +536,7 @@ export default function Settings() {
               <select
                 value={dashDefaultFilters.etat}
                 onChange={(e) =>
-                  setDashDefaultFilters((s) => ({
-                    ...s,
-                    etat: e.target.value as DashFilters["etat"],
-                  }))
+                  setDashDefaultFilters((s) => ({ ...s, etat: e.target.value as DashFilters["etat"] }))
                 }
                 disabled={disabled}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
@@ -589,10 +554,7 @@ export default function Settings() {
               <select
                 value={dashDefaultFilters.pec}
                 onChange={(e) =>
-                  setDashDefaultFilters((s) => ({
-                    ...s,
-                    pec: e.target.value as DashFilters["pec"],
-                  }))
+                  setDashDefaultFilters((s) => ({ ...s, pec: e.target.value as DashFilters["pec"] }))
                 }
                 disabled={disabled}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
@@ -669,12 +631,7 @@ export default function Settings() {
               <input
                 type="date"
                 value={dashDefaultFilters.dateDebut}
-                onChange={(e) =>
-                  setDashDefaultFilters((s) => ({
-                    ...s,
-                    dateDebut: e.target.value,
-                  }))
-                }
+                onChange={(e) => setDashDefaultFilters((s) => ({ ...s, dateDebut: e.target.value }))}
                 disabled={disabled}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               />
@@ -686,12 +643,7 @@ export default function Settings() {
               <input
                 type="date"
                 value={dashDefaultFilters.dateFin}
-                onChange={(e) =>
-                  setDashDefaultFilters((s) => ({
-                    ...s,
-                    dateFin: e.target.value,
-                  }))
-                }
+                onChange={(e) => setDashDefaultFilters((s) => ({ ...s, dateFin: e.target.value }))}
                 disabled={disabled}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               />
@@ -720,20 +672,34 @@ export default function Settings() {
           </button>
         </div>
       </div>
+
+      {/* Modal de confirmation suppression */}
+      {userToDelete && (
+        <ConfirmDeleteMemberModal
+          member={userToDelete}
+          loading={deleting}
+          error={deleteError}
+          onCancel={() => {
+            setUserToDelete(null);
+            setDeleteError("");
+          }}
+          onConfirm={handleDeleteUser}
+        />
+      )}
     </div>
   );
 }
 
-/* ===================== Modal Confirmation Suppression Membre ===================== */
+/* ================== Modal Confirmation Suppression ================== */
 
-function ConfirmDeleteUserModal({
-  user,
+function ConfirmDeleteMemberModal({
+  member,
   loading,
   error,
   onCancel,
   onConfirm,
 }: {
-  user: Member;
+  member: Member;
   loading: boolean;
   error?: string;
   onCancel: () => void;
@@ -751,9 +717,9 @@ function ConfirmDeleteUserModal({
             <p className="text-sm text-gray-700 mt-1">
               Vous êtes sur le point de supprimer le membre{" "}
               <span className="font-semibold">
-                {user.prenom} {user.nom}
+                {member.prenom} {member.nom}
               </span>
-              . Cette action supprimera définitivement son accès à l’application.
+              . Cette action supprimera son accès à l’application.
               <br />
               <span className="font-medium">Cette opération est irréversible.</span>
             </p>
