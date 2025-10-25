@@ -60,7 +60,6 @@ export default function Settings() {
 
   const loadSettings = async () => {
     try {
-      // jours_inactivite
       const { data: inact, error: e1 } = await supabase
         .from("app_settings")
         .select("valeur")
@@ -70,7 +69,6 @@ export default function Settings() {
       if (e1) throw e1;
       if (inact?.valeur) setJoursInactivite(inact.valeur);
 
-      // dashboard_default_filters (JSON)
       const { data: dash, error: e2 } = await supabase
         .from("app_settings")
         .select("valeur")
@@ -97,7 +95,6 @@ export default function Settings() {
     setMessage("");
 
     try {
-      // 1) jours_inactivite
       const { error: e1 } = await supabase.from("app_settings").upsert(
         {
           client_id: clientId,
@@ -108,7 +105,6 @@ export default function Settings() {
       );
       if (e1) throw e1;
 
-      // 2) dashboard_default_filters
       const { error: e2 } = await supabase.from("app_settings").upsert(
         {
           client_id: clientId,
@@ -156,7 +152,9 @@ export default function Settings() {
       setInviteRole("assistant");
     } catch (err: any) {
       console.error("Erreur invitation:", err);
-      setInviteMessage("Erreur lors de l’envoi de l’invitation. Vérifiez si la personne conernée à déjà recu une invitation et si besoin contacter le support ");
+      setInviteMessage(
+        'Erreur lors de l’envoi de l’invitation. Vérifiez si la personne concernée a déjà reçu une invitation. Si besoin, contactez le support : <a href="mailto:support@taysirmed.tn" class="text-teal-600 underline">support@taysirmed.tn</a>'
+      );
     } finally {
       setInviteLoading(false);
     }
@@ -233,7 +231,10 @@ export default function Settings() {
               </button>
             </form>
             {inviteMessage && (
-              <div className="text-sm text-gray-700">{inviteMessage}</div>
+              <div
+                className="text-sm text-gray-700"
+                dangerouslySetInnerHTML={{ __html: inviteMessage }}
+              />
             )}
           </div>
         )}
