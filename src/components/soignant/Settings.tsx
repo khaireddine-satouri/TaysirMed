@@ -281,6 +281,68 @@ export default function Settings() {
           />
         </div>
 
+        {/*Update or delete member*/}
+        function ConfirmDeleteUserModal({
+  user,
+  loading,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  user: any;
+  loading: boolean;
+  error?: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-lg rounded-xl shadow p-6 space-y-5">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-lg bg-red-50 text-red-600">
+            <Trash2 className="w-5 h-5" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-900">Confirmer la suppression</h3>
+            <p className="text-sm text-gray-700 mt-1">
+              Vous êtes sur le point de supprimer le membre{" "}
+              <span className="font-semibold">
+                {user.prenom} {user.nom}
+              </span>. 
+              <br />
+              <span className="font-medium">Cette opération est irréversible.</span>
+            </p>
+            {error && (
+              <div className="mt-3 text-sm bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2">
+                {error}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 transition disabled:opacity-50"
+          >
+            Annuler
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition disabled:opacity-50"
+          >
+            {loading ? 'Suppression…' : 'Supprimer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
         {/* === Filtres par défaut === */}
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-gray-900">
