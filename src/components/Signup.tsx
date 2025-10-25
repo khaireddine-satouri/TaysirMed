@@ -8,6 +8,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
   const [prenom, setPrenom] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
   const [typeClient, setTypeClient] = useState<"soignant" | "medecin">("soignant");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -17,6 +18,13 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
     e.preventDefault();
     setError("");
     setSuccess("");
+
+    // Vérification simple côté front
+    if (password !== password2) {
+      setError("Les mots de passe ne correspondent pas.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -44,7 +52,6 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
       });
       if (rpcError) throw rpcError;
 
-      // Message discret de succès
       setSuccess("Compte créé avec succès. Veuillez vérifier votre boîte mail pour valider votre inscription.");
     } catch (err: any) {
       console.error("Erreur signup:", err);
@@ -120,6 +127,20 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                required
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
+              />
+            </div>
+
+            {/* Confirmation mot de passe */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Confirmer le mot de passe <span className="text-gray-600">*</span>
+              </label>
+              <input
+                type="password"
+                value={password2}
+                onChange={(e) => setPassword2(e.target.value)}
                 required
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
               />
