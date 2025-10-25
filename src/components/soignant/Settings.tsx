@@ -148,20 +148,42 @@ export default function Settings() {
 
     if (error) throw error;
 
-    if (data?.status === "already_exists") {
-      setInviteMessage(`L'adresse ${inviteEmail} correspond déjà à un compte existant.`);
-    } else if (data?.status === "already_invited") {
-      setInviteMessage(`Une invitation est déjà en attente pour ${inviteEmail}.`);
-    } else if (data?.status === "success") {
-      setInviteMessage(
-        `Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
-      );
-      setInviteNom("");
-      setInvitePrenom("");
-      setInviteEmail("");
-      setInviteRole("assistant");
-    } else {
-      setInviteMessage("Erreur inattendue lors de l’invitation.");
+    switch (data?.status) {
+      case "success":
+        setInviteMessage(
+          `Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
+        );
+        setInviteNom("");
+        setInvitePrenom("");
+        setInviteEmail("");
+        setInviteRole("assistant");
+        break;
+
+      case "already_exists":
+        setInviteMessage(
+          `L'adresse ${inviteEmail} correspond déjà à un compte existant.`
+        );
+        break;
+
+      case "already_invited_recently":
+        setInviteMessage(
+          `Une invitation a déjà été envoyée récemment à ${inviteEmail}. Merci de patienter avant de réessayer.`
+        );
+        break;
+
+      case "rate_limited":
+        setInviteMessage(
+          `Trop d'invitations envoyées en peu de temps. Merci de patienter avant de réessayer.`
+        );
+        break;
+
+      default:
+        setInviteMessage(
+          `Erreur inattendue lors de l’invitation${
+            data?.message ? ` : ${data.message}` : ""
+          }.`
+        );
+        break;
     }
   } catch (err: any) {
     console.error("Erreur invitation:", err);
@@ -170,6 +192,7 @@ export default function Settings() {
     setInviteLoading(false);
   }
 };
+
 
 
   const disabled = useMemo(() => !isAdmin, [isAdmin]);
