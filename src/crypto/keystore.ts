@@ -1,23 +1,21 @@
 // src/crypto/keystore.ts
-import type { AesKey } from "./crypto";
+/* Keystore mémoire : on garde la masterKey seulement en RAM. */
 
-let masterKey: AesKey | null = null;
+let _masterKey: CryptoKey | null = null;
+
+export function setMasterKey(k: CryptoKey) {
+  _masterKey = k;
+}
+
+export function getMasterKey(): CryptoKey {
+  if (!_masterKey) throw new Error("MasterKey absente. Déverrouillez d'abord (SecureGate).");
+  return _masterKey;
+}
 
 export function hasMasterKey(): boolean {
-  return masterKey !== null;
+  return !!_masterKey;
 }
 
-export function getMasterKey(): AesKey {
-  if (!masterKey) throw new Error("Master key not set");
-  return masterKey;
-}
-
-/** A appeler au login (après récupération/derivation de clé) */
-export function setMasterKey(key: AesKey) {
-  masterKey = key;
-}
-
-/** Optionnel : logout/cleanup */
 export function clearMasterKey() {
-  masterKey = null;
+  _masterKey = null;
 }
