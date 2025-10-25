@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from "./contexts/AuthContext";
 // Pages Auth
 import Login from "./components/Login";
 import Signup from "./components/Signup";
+import SetInitialPassword from "./components/SetInitialPassword";
 
 // Layouts
 import SoignantLayout from "./components/layouts/SoignantLayout";
@@ -38,11 +39,21 @@ type SoignantView =
   | "tickets_collab"
   | "tickets_admin";
 
+// --- utilitaire pour lire le hash Supabase
+function parseHash(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+  const params = new URLSearchParams(hash);
+  const out: Record<string, string> = {};
+  params.forEach((v, k) => (out[k] = v));
+  return out;
+}
+
 function AppContent() {
   const { user, userBase, loading } = useAuth();
   const [showSignup, setShowSignup] = useState(false);
 
-  // Navigation soignant
+  // navigation soignant
   const [currentView, setCurrentView] = useState<SoignantView>("patients");
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [selectedDossier, setSelectedDossier] = useState<DossierSoin | null>(null);
@@ -52,7 +63,15 @@ function AppContent() {
   const isAdmin = userBase?.type_utilisateur === "admin";
   const isAssistant = userBase?.type_utilisateur === "assistant";
 
-  // Vue par défaut
+  // détection des liens d'invitation/récupération
+  const [authType, setAuthType] = useState<"invite" | "recovery" | null>(null);
+  useEffect(() => {
+    const h = parseHash();
+    const t = (h["type"] as "invite" | "recovery" | undefined) || null;
+    if (t === "invite" || t === "recovery") setAuthType(t);
+  }, []);
+
+  // vue par défaut soignant
   useEffect(() => {
     if (loading || !userBase) return;
     if (!hasInitialized.current) {
@@ -73,6 +92,12 @@ function AppContent() {
     );
   }
 
+  // cas 1 : lien d’invitation ou de réinitialisation
+  if (authType && user) {
+    return <SetInitialPassword mode={authType} onDone={() => setAuthType(null)} />;
+  }
+
+  // cas 2 : non connecté
   if (!user || !userBase) {
     hasInitialized.current = false;
     return showSignup ? (
@@ -82,7 +107,7 @@ function AppContent() {
     );
   }
 
-  /** Navigation principale */
+  /** navigation principale */
   const handleNavigate = (view: string) => {
     setCurrentView(view as SoignantView);
     setSelectedPatient(null);
@@ -90,7 +115,7 @@ function AppContent() {
     if (view === "dashboard") setDashOverrideFilters(null);
   };
 
-  /** Sélections patients / dossiers */
+  /** sélections patients / dossiers */
   const handleSelectPatient = (patient: Patient) => {
     setSelectedPatient(patient);
     setSelectedDossier(null);
@@ -106,7 +131,7 @@ function AppContent() {
     setSelectedDossier(null);
   };
 
-  /** Ouverture via Tickets */
+  /** ouverture via tickets */
   const openPatientById = async (patientId: string) => {
     const { data } = await supabase.from("patients").select("*").eq("id", patientId).maybeSingle();
     if (data) {
@@ -128,13 +153,13 @@ function AppContent() {
     }
   };
 
-  /** Depuis Analytics vers Dashboard */
+  /** depuis analytics vers dashboard */
   const openDashboardWithFilters = (filters: DashboardFilters) => {
     setDashOverrideFilters(filters);
     setCurrentView("dashboard");
   };
 
-  /** Rendu logique côté soignant */
+  /** rendu logique côté soignant */
   const renderSoignantContent = () => {
     if (selectedDossier && selectedPatient) {
       return <DossierDetail dossier={selectedDossier} patient={selectedPatient} onBack={handleBackToDossiers} />;
@@ -165,18 +190,26 @@ function AppContent() {
         return <PatientsList onSelectPatient={handleSelectPatient} />;
 
       case "effectif":
-        return <EffectifDuJour onOpenDossier={(dossier, patient) => {
-          setSelectedPatient(patient);
-          setSelectedDossier(dossier);
-          setCurrentView("patients");
-        }} />;
+        return (
+          <EffectifDuJour
+            onOpenDossier={(dossier, patient) => {
+              setSelectedPatient(patient);
+              setSelectedDossier(dossier);
+              setCurrentView("patients");
+            }}
+          />
+        );
 
       case "planning":
-        return <Planning onOpenDossier={(dossier, patient) => {
-          setSelectedPatient(patient);
-          setSelectedDossier(dossier);
-          setCurrentView("patients");
-        }} />;
+        return (
+          <Planning
+            onOpenDossier={(dossier, patient) => {
+              setSelectedPatient(patient);
+              setSelectedDossier(dossier);
+              setCurrentView("patients");
+            }}
+          />
+        );
 
       case "settings":
         return isAdmin ? <Settings /> : <PatientsList onSelectPatient={handleSelectPatient} />;
