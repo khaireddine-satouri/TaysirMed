@@ -64,7 +64,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
               <Stethoscope className="w-8 h-8 text-teal-600" />
             </div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Création de compte</h1>
-            <p className="text-gray-400">Commencez à gérer votre cabinet en quelques secondes</p>
+            <p className="text-gray-600">Commencez à gérer votre cabinet en quelques secondes</p>
           </div>
 
           {/* Form */}
@@ -140,9 +140,9 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
                     className="mt-1"
                   />
                   <span>
-                    <span className="font-medium">Soignant paramédical</span>
+                    <span className="font-medium">Soignant</span>
                     <span className="block text-sm text-gray-600">
-                      Gestion en temps réel des dossiers de soins, du suivi des séances et du personnel associé.
+                      Gestion en temps réel des <b>dossiers de soins</b>, du suivi des séances et du personnel associé.
                     </span>
                   </span>
                 </label>
@@ -158,7 +158,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
                   <span>
                     <span className="font-medium">Médecin</span>
                     <span className="block text-sm text-gray-600">
-                      Gestion des dossiers médicaux, des rendez-vous et du personnel associé.
+                      Gestion des <b>dossiers médicaux</b>, des rendez-vous et du personnel associé.
                     </span>
                   </span>
                 </label>
