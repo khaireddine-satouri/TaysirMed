@@ -18,13 +18,13 @@ export default function SetInitialPassword({
   const label =
     mode === "invite" ? "Définir mon mot de passe" : "Définir un nouveau mot de passe";
 
+  // ✅ On ne valide que l'égalité des deux mots de passe côté front.
   const invalidReason = useMemo(() => {
-    if (password.length < 8) return "Le mot de passe doit contenir au moins 8 caractères.";
     if (password !== password2) return "Les mots de passe ne correspondent pas.";
     return "";
   }, [password, password2]);
 
-  const disabled = loading || !!invalidReason;
+  const disabled = loading || !!invalidReason || password.length === 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,18 +38,18 @@ export default function SetInitialPassword({
 
     setLoading(true);
     try {
-      // Le lien d’invitation crée déjà une session (si tu as bien fait setSession dans App.tsx)
+      // La session doit déjà être créée via setSession() après clic du lien (App.tsx)
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
 
       setMsg("Mot de passe défini. Vous pouvez maintenant continuer.");
-      // Nettoyer le hash (#type=invite&...)
+      // Nettoyer l’URL (#... tokens)
       if (typeof window !== "undefined") {
         window.history.replaceState({}, "", window.location.pathname + window.location.search);
       }
-      // Petite pause puis retour au flux normal
       setTimeout(onDone, 800);
     } catch (e: any) {
+      // Supabase retournera les messages (ex: contrainte de complexité, longueur, etc.)
       setErr(e?.message || "Erreur lors de la définition du mot de passe.");
     } finally {
       setLoading(false);
@@ -78,11 +78,9 @@ export default function SetInitialPassword({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength={8}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
               placeholder="••••••••"
             />
-            <p className="mt-1 text-xs text-gray-500">8 caractères minimum.</p>
           </div>
 
           <div>
@@ -94,7 +92,6 @@ export default function SetInitialPassword({
               value={password2}
               onChange={(e) => setPassword2(e.target.value)}
               required
-              minLength={8}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
               placeholder="••••••••"
             />
