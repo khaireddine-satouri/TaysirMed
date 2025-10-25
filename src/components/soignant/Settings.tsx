@@ -268,29 +268,6 @@ export default function Settings() {
             Filtres par défaut — Tableau de bord des dossiers de soins
           </h3>
 
-          {/* ... ton code de filtres reste inchangé ... */}
-
-          <button
-            onClick={saveAll}
-            disabled={loading || disabled}
-            className="flex items-center gap-2 px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-medium transition disabled:opacity-50"
-          >
-            <Save className="w-5 h-5" />
-            {loading ? "Enregistrement…" : "Enregistrer"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-        {/* === Filtres par défaut === */}
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-gray-900">
-            Filtres par défaut — Tableau de bord des dossiers de soins
-          </h3>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* État */}
             <div>
