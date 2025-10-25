@@ -26,9 +26,6 @@ import Planning from "./components/soignant/Planning";
 // Médecin
 import RendezVousList from "./components/medecin/RendezVousList";
 
-// Crypto
-import SecureGate from "./components/SecureGate";
-
 // Types
 import { supabase, PatientCipher as Patient, DossierSoins as DossierSoin } from "./lib/supabase";
 
@@ -233,20 +230,23 @@ function AppContent() {
   };
 
   // ==== rendu final ====
-  const mainApp = userBase.type_client === "soignant" ? (
-    <SoignantLayout currentView={currentView} onNavigate={handleNavigate}>
-      {renderSoignantContent()}
-    </SoignantLayout>
-  ) : userBase.type_client === "medecin" ? (
-    <MedecinLayout currentView={currentView} onNavigate={setCurrentView}>
-      {currentView === "rendezvous" && <RendezVousList />}
-    </MedecinLayout>
-  ) : (
-    <div>Type de client inconnu</div>
-  );
+  if (userBase.type_client === "soignant") {
+    return (
+      <SoignantLayout currentView={currentView} onNavigate={handleNavigate}>
+        {renderSoignantContent()}
+      </SoignantLayout>
+    );
+  }
 
-  // 🔐 Ici on protège tout avec SecureGate
-  return <SecureGate>{mainApp}</SecureGate>;
+  if (userBase.type_client === "medecin") {
+    return (
+      <MedecinLayout currentView={currentView} onNavigate={setCurrentView}>
+        {currentView === "rendezvous" && <RendezVousList />}
+      </MedecinLayout>
+    );
+  }
+
+  return <div>Type de client inconnu</div>;
 }
 
 export default function App() {
