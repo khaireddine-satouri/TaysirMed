@@ -1,39 +1,74 @@
-import { useState, useEffect } from 'react';
-import { supabase, Patient } from '../../lib/supabase';
-import { Search, Plus, User, Phone, X, Trash2 } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
-import PhotoUploadSection from './PhotoUploadSection';
+import { useEffect, useMemo, useState } from "react";
+import { supabase, type PatientCipher } from "../../lib/supabase";
+import { Search, Plus, User, Phone, X, Trash2 } from "lucide-react";
+import { useAuth } from "../../contexts/AuthContext";
 
-interface PatientWithUrl extends Patient {
-  signedUrl?: string | null;
-}
+// Helpers crypto (prévu dans notre implémentation)
+import * as CryptoBox from "../../crypto/CryptoBox";
+import { KeyService } from "../../crypto/KeyService";
+
+// ======================
+// Types UI (déchiffrés)
+// ======================
+export type PatientPlain = {
+  id: string;
+  nom: string;
+  prenom: string;
+  telephone: string;
+  telephone2?: string | null;
+  created_at: string;
+};
 
 interface PatientsListProps {
-  onSelectPatient: (patient: PatientWithUrl) => void;
+  onSelectPatient: (patient: PatientPlain) => void;
+}
+
+// Bytea -> Uint8Array (gère "\x..." hex et base64)
+function toBytes(value: any): Uint8Array {
+  if (!value) return new Uint8Array();
+  if (value instanceof Uint8Array) return value;
+  if (typeof value === "string") {
+    if (value.startsWith("\\x")) {
+      const hex = value.slice(2);
+      const out = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < hex.length; i += 2) {
+        out[i / 2] = parseInt(hex.substr(i, 2), 16);
+      }
+      return out;
+    }
+    try {
+      return CryptoBox.base64ToBytes(value);
+    } catch {
+      return new TextEncoder().encode(value);
+    }
+  }
+  return new TextEncoder().encode(JSON.stringify(value));
 }
 
 export default function PatientsList({ onSelectPatient }: PatientsListProps) {
   const { user, userBase } = useAuth();
-  const isAdmin = userBase?.type_utilisateur === 'admin';
+  const isAdmin = userBase?.type_utilisateur === "admin";
 
-  const [patients, setPatients] = useState<PatientWithUrl[]>([]);
-  const [filteredPatients, setFilteredPatients] = useState<PatientWithUrl[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [patients, setPatients] = useState<PatientPlain[]>([]);
+  const [filteredPatients, setFilteredPatients] = useState<PatientPlain[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
+
+  // Suppression
+  const [patientToDelete, setPatientToDelete] = useState<PatientPlain | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string>("");
+
+  // Modal ajout
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // État suppression
-  const [patientToDelete, setPatientToDelete] = useState<PatientWithUrl | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string>('');
-
   useEffect(() => {
-    loadPatients();
+    loadPatientsV2();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (searchTerm.trim() === '') {
+    if (searchTerm.trim() === "") {
       setFilteredPatients(patients);
       return;
     }
@@ -41,13 +76,13 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
     const normalize = (s: string) =>
       s
         .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
         .trim();
 
     const term = normalize(searchTerm);
     const tokens = term.split(/\s+/).filter(Boolean);
-    const digits = searchTerm.replace(/\D/g, '');
+    const digits = searchTerm.replace(/\D/g, "");
 
     const next = patients.filter((p) => {
       const first = normalize(p.prenom);
@@ -61,10 +96,8 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
 
       const phoneMatch =
         digits.length >= 3 &&
-        (
-          (p.telephone || '').replace(/\D/g, '').includes(digits) ||
-          (p.telephone_2 ? p.telephone_2.replace(/\D/g, '').includes(digits) : false)
-        );
+        ((p.telephone || "").replace(/\D/g, "").includes(digits) ||
+          (p.telephone2 ? p.telephone2.replace(/\D/g, "").includes(digits) : false));
 
       return allTokensInFull || simpleMatch || phoneMatch;
     });
@@ -72,70 +105,83 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
     setFilteredPatients(next);
   }, [searchTerm, patients]);
 
-  const loadPatients = async () => {
+  async function loadPatientsV2() {
     try {
       setLoading(true);
+
       const { data, error } = await supabase
-        .from('patients')
-        .select('id, nom, prenom, telephone, telephone_2, photo_path, client_id, created_at')
-        .order('created_at', { ascending: false });
+        .from("patients")
+        .select("id, nom_ct, prenom_ct, telephone_ct, telephone2_ct, created_at")
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
 
-      // Générer la signed URL pour chaque patient (sans cache mémoire)
-      const patientsWithUrls: PatientWithUrl[] = await Promise.all(
-        (data || []).map(async (p: Patient) => {
-          if (!p.photo_path) return { ...p, signedUrl: null };
-          const { data: signed, error: signErr } = await supabase.storage
-            .from('patient_photos')
-            .createSignedUrl(p.photo_path, 600); // 10 min
-          return { ...p, signedUrl: signErr ? null : signed?.signedUrl || null };
+      const dek = await KeyService.getDEK();
+      if (!dek) throw new Error("DEK indisponible (bootstrap non terminé).");
+
+      const plain: PatientPlain[] = await Promise.all(
+        (data || []).map(async (row: any) => {
+          const nom = await CryptoBox.decryptBytesToUtf8(toBytes(row.nom_ct), dek);
+          const prenom = await CryptoBox.decryptBytesToUtf8(toBytes(row.prenom_ct), dek);
+          const telephone = await CryptoBox.decryptBytesToUtf8(toBytes(row.telephone_ct), dek);
+          const telephone2 = row.telephone2_ct
+            ? await CryptoBox.decryptBytesToUtf8(toBytes(row.telephone2_ct), dek)
+            : null;
+
+          return {
+            id: row.id,
+            nom,
+            prenom,
+            telephone,
+            telephone2,
+            created_at: row.created_at,
+          };
         })
       );
 
-      setPatients(patientsWithUrls);
-      setFilteredPatients(patientsWithUrls);
+      setPatients(plain);
+      setFilteredPatients(plain);
     } catch (err) {
-      console.error('Erreur chargement patients:', err);
+      console.error("Erreur chargement patients:", err);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   const handleAddPatient = () => setShowAddModal(true);
 
-  // Suppression via Edge Function
+  // Suppression via Edge Function (inchangé)
   const handleDeletePatient = async () => {
     if (!patientToDelete) return;
     setDeleting(true);
-    setDeleteError('');
+    setDeleteError("");
 
     try {
       const session = (await supabase.auth.getSession()).data.session;
       if (!session) {
-        setDeleteError('Session expirée. Veuillez vous reconnecter.');
+        setDeleteError("Session expirée. Veuillez vous reconnecter.");
         setDeleting(false);
         return;
       }
 
       const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-patient`;
       const res = await fetch(fnUrl, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ patientId: patientToDelete.id }),
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Erreur lors de la suppression');
+      if (!res.ok) throw new Error(data.error || "Erreur lors de la suppression");
 
       setPatientToDelete(null);
-      await loadPatients();
+      await loadPatientsV2();
     } catch (err: any) {
-      console.error('Erreur suppression patient:', err);
-      setDeleteError(err.message || 'La suppression a échoué.');
+      console.error("Erreur suppression patient:", err);
+      setDeleteError(err.message || "La suppression a échoué.");
     } finally {
       setDeleting(false);
     }
@@ -179,10 +225,10 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
             <div className="flex items-start gap-3">
               <button
                 onClick={() => onSelectPatient(patient)}
-                className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden"
+                className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0"
                 title="Voir le patient"
               >
-                <PatientAvatar patient={patient} />
+                <User className="w-6 h-6 text-teal-600" />
               </button>
 
               <div className="flex-1 min-w-0">
@@ -198,10 +244,10 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
                     <Phone className="w-4 h-4" />
                     <span className="truncate">{patient.telephone}</span>
                   </div>
-                  {patient.telephone_2 && (
+                  {patient.telephone2 && (
                     <div className="flex items-center gap-1 text-sm text-gray-600 mt-0.5">
                       <Phone className="w-4 h-4 opacity-70" />
-                      <span className="truncate">{patient.telephone_2}</span>
+                      <span className="truncate">{patient.telephone2}</span>
                     </div>
                   )}
                 </button>
@@ -224,7 +270,7 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
 
       {filteredPatients.length === 0 && (
         <div className="text-center py-12 text-gray-500">
-          {searchTerm ? 'Aucun patient trouvé' : 'Aucun patient enregistré'}
+          {searchTerm ? "Aucun patient trouvé" : "Aucun patient enregistré"}
         </div>
       )}
 
@@ -234,10 +280,10 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
           onClose={() => setShowAddModal(false)}
           onSuccess={() => {
             setShowAddModal(false);
-            loadPatients();
+            loadPatientsV2();
           }}
-          userId={user?.id || ''}
-          clientId={userBase?.client_id || ''}
+          userId={user?.id || ""}
+          clientId={userBase?.client_id || ""}
         />
       )}
 
@@ -255,24 +301,7 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
   );
 }
 
-/* ======= Avatar : consomme la signedUrl déjà fournie ======= */
-function PatientAvatar({ patient }: { patient: PatientWithUrl }) {
-  if (!patient.signedUrl) {
-    return <User className="w-6 h-6 text-teal-600" />;
-  }
-
-  return (
-    <img
-      src={patient.signedUrl}
-      alt={`${patient.prenom} ${patient.nom}`}
-      className="w-12 h-12 rounded-full object-cover"
-      loading="lazy"
-      referrerPolicy="no-referrer"
-    />
-  );
-}
-
-/* ======= Modal Ajout Patient ======= */
+/* ======= Modal Ajout Patient (V2) — pas de photo ======= */
 
 interface AddPatientModalProps {
   onClose: () => void;
@@ -282,82 +311,54 @@ interface AddPatientModalProps {
 }
 
 function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientModalProps) {
-  const [nom, setNom] = useState('');
-  const [prenom, setPrenom] = useState('');
-  const [telephone, setTelephone] = useState('');
-  const [telephone2, setTelephone2] = useState(''); // NEW
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [nom, setNom] = useState("");
+  const [prenom, setPrenom] = useState("");
+  const [telephone, setTelephone] = useState("");
+  const [telephone2, setTelephone2] = useState(""); // optionnel
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setPhotoFile(file);
-    const reader = new FileReader();
-    reader.onloadend = () => setPhotoPreview(reader.result as string);
-    reader.readAsDataURL(file);
-  };
-
-  const handlePhotoCapture = (file: File) => {
-    setPhotoFile(file);
-    const reader = new FileReader();
-    reader.onloadend = () => setPhotoPreview(reader.result as string);
-    reader.readAsDataURL(file);
-  };
+  const canSubmit = useMemo(() => {
+    return nom.trim() && prenom.trim() && telephone.trim();
+  }, [nom, prenom, telephone]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    if (!canSubmit) return;
+    setError("");
     setLoading(true);
 
     try {
-      // 1) créer le patient (sans photo) pour récupérer l'ID
-      const { data: inserted, error: insertError } = await supabase
-        .from('patients')
+      // 1) DEK en mémoire
+      const dek = await KeyService.getDEK();
+      if (!dek) throw new Error("DEK indisponible.");
+
+      // 2) Chiffrer
+      const nom_ct = await CryptoBox.encryptUtf8ToBytes(nom.trim(), dek);
+      const prenom_ct = await CryptoBox.encryptUtf8ToBytes(prenom.trim(), dek);
+      const telephone_ct = await CryptoBox.encryptUtf8ToBytes(telephone.trim(), dek);
+      const telephone2_ct = telephone2.trim()
+        ? await CryptoBox.encryptUtf8ToBytes(telephone2.trim(), dek)
+        : null;
+
+      // 3) Insérer
+      const { error: insertError } = await supabase
+        .from("patients")
         .insert({
-          nom: nom.trim(),
-          prenom: prenom.trim(),
-          telephone: telephone.trim(),
-          telephone_2: telephone2.trim() || null, // NEW
-          created_by: userId,
-          client_id: clientId,
-        })
-        .select('id')
-        .single();
+          nom_ct,
+          prenom_ct,
+          telephone_ct,
+          telephone2_ct,
+          created_by: userId || null,
+          client_id: clientId, // RLS: doit matcher current_client_id()
+        } as Partial<PatientCipher>);
 
       if (insertError) throw insertError;
-      const patientId = inserted.id as string;
-
-      // 2) si photo, uploader
-      if (photoFile) {
-        const ext = (photoFile.name.split('.').pop() || 'jpg').toLowerCase();
-        const filename = `${crypto.randomUUID()}.${ext}`;
-        const storagePath = `${clientId}/${patientId}/${filename}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('patient_photos')
-          .upload(storagePath, photoFile, {
-            contentType: photoFile.type || 'application/octet-stream',
-            upsert: false,
-            cacheControl: '3600',
-          });
-
-        if (uploadError) throw uploadError;
-
-        // 3) maj du path
-        const { error: updError } = await supabase
-          .from('patients')
-          .update({ photo_path: storagePath })
-          .eq('id', patientId);
-
-        if (updError) throw updError;
-      }
 
       onSuccess();
     } catch (err: any) {
-      setError(err.message || 'Erreur lors de la création du patient');
+      console.error("Erreur création patient:", err);
+      setError(err.message || "Erreur lors de la création du patient");
     } finally {
       setLoading(false);
     }
@@ -374,12 +375,6 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <PhotoUploadSection
-            photoPreview={photoPreview}
-            onPhotoChange={handlePhotoChange}
-            onPhotoCapture={handlePhotoCapture}
-          />
-
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Nom *</label>
             <input
@@ -414,7 +409,9 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Téléphone 2 (optionnel)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Téléphone 2 (optionnel)
+            </label>
             <input
               type="tel"
               value={telephone2}
@@ -439,10 +436,10 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !canSubmit}
               className="flex-1 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition disabled:opacity-50"
             >
-              {loading ? 'Création...' : 'Créer'}
+              {loading ? "Création..." : "Créer"}
             </button>
           </div>
         </form>
@@ -451,7 +448,7 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
   );
 }
 
-/* ======= Modal Confirmation Suppression ======= */
+/* ======= Modal Confirmation Suppression (V2) ======= */
 
 function ConfirmDeletePatientModal({
   patient,
@@ -460,7 +457,7 @@ function ConfirmDeletePatientModal({
   onCancel,
   onConfirm,
 }: {
-  patient: PatientWithUrl;
+  patient: PatientPlain;
   loading: boolean;
   error?: string;
   onCancel: () => void;
@@ -476,10 +473,11 @@ function ConfirmDeletePatientModal({
           <div className="flex-1">
             <h3 className="text-lg font-semibold text-gray-900">Confirmer la suppression</h3>
             <p className="text-sm text-gray-700 mt-1">
-              Vous êtes sur le point de supprimer le patient{' '}
+              Vous êtes sur le point de supprimer le patient{" "}
               <span className="font-semibold">
                 {patient.prenom} {patient.nom}
-              </span>. Cette action entraînera la suppression définitive de tous les dossiers
+              </span>
+              . Cette action entraînera la suppression définitive de tous les dossiers
               de soins associés, y compris leurs séances et documents.
               <br />
               <span className="font-medium">Cette opération est irréversible.</span>
@@ -507,7 +505,7 @@ function ConfirmDeletePatientModal({
             disabled={loading}
             className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition disabled:opacity-50"
           >
-            {loading ? 'Suppression…' : 'Supprimer'}
+            {loading ? "Suppression…" : "Supprimer"}
           </button>
         </div>
       </div>
