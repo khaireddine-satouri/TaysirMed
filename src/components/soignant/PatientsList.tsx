@@ -1,69 +1,61 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabase, type PatientCipher } from "../../lib/supabase";
+import { useState, useEffect } from "react";
+import { supabase, PatientCipher as Patient } from "../../lib/supabase";
 import { Search, Plus, User, Phone, X, Trash2 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
-
-// Helpers crypto (prévu dans notre implémentation)
-import * as CryptoBox from "../../crypto/CryptoBox";
+import * as EncryptionService from "../../crypto/EncryptionService";
 import { KeyService } from "../../crypto/KeyService";
 
-// ======================
-// Types UI (déchiffrés)
-// ======================
-export type PatientPlain = {
-  id: string;
-  nom: string;
-  prenom: string;
-  telephone: string;
-  telephone2?: string | null;
-  created_at: string;
-};
-
-interface PatientsListProps {
-  onSelectPatient: (patient: PatientPlain) => void;
-}
-
-// Bytea -> Uint8Array (gère "\x..." hex et base64)
+/** Conversion générique pour bytea retourné par Supabase:
+ * - PostgREST renvoie souvent des strings hexadécimales: "\\x...."
+ * - On accepte aussi un Uint8Array direct
+ */
 function toBytes(value: any): Uint8Array {
   if (!value) return new Uint8Array();
   if (value instanceof Uint8Array) return value;
   if (typeof value === "string") {
-    if (value.startsWith("\\x")) {
-      const hex = value.slice(2);
-      const out = new Uint8Array(hex.length / 2);
-      for (let i = 0; i < hex.length; i += 2) {
-        out[i / 2] = parseInt(hex.substr(i, 2), 16);
-      }
-      return out;
+    const hex = value.startsWith("\\x") ? value.slice(2) : value;
+    const len = hex.length / 2;
+    const out = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      out[i] = parseInt(hex.substr(i * 2, 2), 16);
     }
-    try {
-      return CryptoBox.base64ToBytes(value);
-    } catch {
-      return new TextEncoder().encode(value);
-    }
+    return out;
   }
-  return new TextEncoder().encode(JSON.stringify(value));
+  // Postgrest peut aussi renvoyer Array<number>
+  if (Array.isArray(value)) return new Uint8Array(value);
+  return new Uint8Array();
+}
+
+type PatientView = {
+  id: string;
+  nom: string;
+  prenom: string;
+  telephone: string;
+  telephone_2: string | null;
+  created_at: string;
+};
+
+interface PatientsListProps {
+  onSelectPatient: (patient: any /* adapt if needed for next screen */) => void;
 }
 
 export default function PatientsList({ onSelectPatient }: PatientsListProps) {
   const { user, userBase } = useAuth();
   const isAdmin = userBase?.type_utilisateur === "admin";
 
-  const [patients, setPatients] = useState<PatientPlain[]>([]);
-  const [filteredPatients, setFilteredPatients] = useState<PatientPlain[]>([]);
+  const [patients, setPatients] = useState<PatientView[]>([]);
+  const [filteredPatients, setFilteredPatients] = useState<PatientView[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
 
-  // Suppression
-  const [patientToDelete, setPatientToDelete] = useState<PatientPlain | null>(null);
+  // État suppression
+  const [patientToDelete, setPatientToDelete] = useState<PatientView | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string>("");
 
-  // Modal ajout
-  const [showAddModal, setShowAddModal] = useState(false);
-
   useEffect(() => {
-    loadPatientsV2();
+    loadPatients();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -94,10 +86,11 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
       const allTokensInFull = tokens.every((t) => fullFL.includes(t) || fullLF.includes(t));
       const simpleMatch = first.includes(term) || last.includes(term);
 
+      const phoneDigits = (s: string) => (s || "").replace(/\D/g, "");
       const phoneMatch =
         digits.length >= 3 &&
-        ((p.telephone || "").replace(/\D/g, "").includes(digits) ||
-          (p.telephone2 ? p.telephone2.replace(/\D/g, "").includes(digits) : false));
+        (phoneDigits(p.telephone).includes(digits) ||
+          (p.telephone_2 ? phoneDigits(p.telephone_2).includes(digits) : false));
 
       return allTokensInFull || simpleMatch || phoneMatch;
     });
@@ -105,10 +98,21 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
     setFilteredPatients(next);
   }, [searchTerm, patients]);
 
-  async function loadPatientsV2() {
+  const loadPatients = async () => {
     try {
       setLoading(true);
 
+      // 1) On récupère la DEK (doit déjà être déverrouillée)
+      const dek = await KeyService.getCurrentDEK();
+      if (!dek) {
+        console.error("DEK indisponible — session de chiffrement verrouillée.");
+        setPatients([]);
+        setFilteredPatients([]);
+        setLoading(false);
+        return;
+      }
+
+      // 2) Charger les patients (champs *_ct)
       const { data, error } = await supabase
         .from("patients")
         .select("id, nom_ct, prenom_ct, telephone_ct, telephone2_ct, created_at")
@@ -116,16 +120,14 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
 
       if (error) throw error;
 
-      const dek = await KeyService.getDEK();
-      if (!dek) throw new Error("DEK indisponible (bootstrap non terminé).");
-
-      const plain: PatientPlain[] = await Promise.all(
+      // 3) Déchiffrer
+      const views: PatientView[] = await Promise.all(
         (data || []).map(async (row: any) => {
-          const nom = await CryptoBox.decryptBytesToUtf8(toBytes(row.nom_ct), dek);
-          const prenom = await CryptoBox.decryptBytesToUtf8(toBytes(row.prenom_ct), dek);
-          const telephone = await CryptoBox.decryptBytesToUtf8(toBytes(row.telephone_ct), dek);
-          const telephone2 = row.telephone2_ct
-            ? await CryptoBox.decryptBytesToUtf8(toBytes(row.telephone2_ct), dek)
+          const nom = await EncryptionService.decryptBytesToUtf8(toBytes(row.nom_ct), dek);
+          const prenom = await EncryptionService.decryptBytesToUtf8(toBytes(row.prenom_ct), dek);
+          const telephone = await EncryptionService.decryptBytesToUtf8(toBytes(row.telephone_ct), dek);
+          const telephone_2 = row.telephone2_ct
+            ? await EncryptionService.decryptBytesToUtf8(toBytes(row.telephone2_ct), dek)
             : null;
 
           return {
@@ -133,24 +135,24 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
             nom,
             prenom,
             telephone,
-            telephone2,
+            telephone_2,
             created_at: row.created_at,
-          };
+          } as PatientView;
         })
       );
 
-      setPatients(plain);
-      setFilteredPatients(plain);
+      setPatients(views);
+      setFilteredPatients(views);
     } catch (err) {
       console.error("Erreur chargement patients:", err);
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   const handleAddPatient = () => setShowAddModal(true);
 
-  // Suppression via Edge Function (inchangé)
+  // Suppression via Edge Function
   const handleDeletePatient = async () => {
     if (!patientToDelete) return;
     setDeleting(true);
@@ -178,7 +180,7 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
       if (!res.ok) throw new Error(data.error || "Erreur lors de la suppression");
 
       setPatientToDelete(null);
-      await loadPatientsV2();
+      await loadPatients();
     } catch (err: any) {
       console.error("Erreur suppression patient:", err);
       setDeleteError(err.message || "La suppression a échoué.");
@@ -225,10 +227,10 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
             <div className="flex items-start gap-3">
               <button
                 onClick={() => onSelectPatient(patient)}
-                className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0"
+                className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden"
                 title="Voir le patient"
               >
-                <User className="w-6 h-6 text-teal-600" />
+                <PatientAvatar nom={patient.nom} prenom={patient.prenom} />
               </button>
 
               <div className="flex-1 min-w-0">
@@ -244,10 +246,10 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
                     <Phone className="w-4 h-4" />
                     <span className="truncate">{patient.telephone}</span>
                   </div>
-                  {patient.telephone2 && (
+                  {patient.telephone_2 && (
                     <div className="flex items-center gap-1 text-sm text-gray-600 mt-0.5">
                       <Phone className="w-4 h-4 opacity-70" />
-                      <span className="truncate">{patient.telephone2}</span>
+                      <span className="truncate">{patient.telephone_2}</span>
                     </div>
                   )}
                 </button>
@@ -280,7 +282,7 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
           onClose={() => setShowAddModal(false)}
           onSuccess={() => {
             setShowAddModal(false);
-            loadPatientsV2();
+            loadPatients();
           }}
           userId={user?.id || ""}
           clientId={userBase?.client_id || ""}
@@ -301,7 +303,18 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
   );
 }
 
-/* ======= Modal Ajout Patient (V2) — pas de photo ======= */
+/* ======= Avatar simple (initiales) ======= */
+function PatientAvatar({ nom, prenom }: { nom: string; prenom: string }) {
+  const initials =
+    (prenom?.[0] || "").toUpperCase() + (nom?.[0] || "").toUpperCase();
+  return (
+    <div className="w-12 h-12 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center font-semibold">
+      {initials || <User className="w-6 h-6 text-teal-600" />}
+    </div>
+  );
+}
+
+/* ======= Modal Ajout Patient ======= */
 
 interface AddPatientModalProps {
   onClose: () => void;
@@ -314,50 +327,42 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
   const [nom, setNom] = useState("");
   const [prenom, setPrenom] = useState("");
   const [telephone, setTelephone] = useState("");
-  const [telephone2, setTelephone2] = useState(""); // optionnel
+  const [telephone2, setTelephone2] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const canSubmit = useMemo(() => {
-    return nom.trim() && prenom.trim() && telephone.trim();
-  }, [nom, prenom, telephone]);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmit) return;
     setError("");
     setLoading(true);
 
     try {
-      // 1) DEK en mémoire
-      const dek = await KeyService.getDEK();
-      if (!dek) throw new Error("DEK indisponible.");
+      const dek = await KeyService.getCurrentDEK();
+      if (!dek) {
+        throw new Error("Veuillez déverrouiller la session de chiffrement (WebAuthn) pour créer un patient.");
+      }
 
-      // 2) Chiffrer
-      const nom_ct = await CryptoBox.encryptUtf8ToBytes(nom.trim(), dek);
-      const prenom_ct = await CryptoBox.encryptUtf8ToBytes(prenom.trim(), dek);
-      const telephone_ct = await CryptoBox.encryptUtf8ToBytes(telephone.trim(), dek);
+      const nom_ct = await EncryptionService.encryptUtf8ToBytes(nom.trim(), dek);
+      const prenom_ct = await EncryptionService.encryptUtf8ToBytes(prenom.trim(), dek);
+      const telephone_ct = await EncryptionService.encryptUtf8ToBytes(telephone.trim(), dek);
       const telephone2_ct = telephone2.trim()
-        ? await CryptoBox.encryptUtf8ToBytes(telephone2.trim(), dek)
+        ? await EncryptionService.encryptUtf8ToBytes(telephone.trim() ? telephone2.trim() : "", dek)
         : null;
 
-      // 3) Insérer
-      const { error: insertError } = await supabase
-        .from("patients")
-        .insert({
-          nom_ct,
-          prenom_ct,
-          telephone_ct,
-          telephone2_ct,
-          created_by: userId || null,
-          client_id: clientId, // RLS: doit matcher current_client_id()
-        } as Partial<PatientCipher>);
+      const { error: insertError } = await supabase.from("patients").insert({
+        nom_ct,
+        prenom_ct,
+        telephone_ct,
+        telephone2_ct,
+        created_by: userId || null,
+        client_id: clientId,
+      });
 
       if (insertError) throw insertError;
 
       onSuccess();
     } catch (err: any) {
-      console.error("Erreur création patient:", err);
       setError(err.message || "Erreur lors de la création du patient");
     } finally {
       setLoading(false);
@@ -409,9 +414,7 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Téléphone 2 (optionnel)
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Téléphone 2 (optionnel)</label>
             <input
               type="tel"
               value={telephone2}
@@ -436,7 +439,7 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
             </button>
             <button
               type="submit"
-              disabled={loading || !canSubmit}
+              disabled={loading}
               className="flex-1 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition disabled:opacity-50"
             >
               {loading ? "Création..." : "Créer"}
@@ -448,7 +451,7 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
   );
 }
 
-/* ======= Modal Confirmation Suppression (V2) ======= */
+/* ======= Modal Confirmation Suppression ======= */
 
 function ConfirmDeletePatientModal({
   patient,
@@ -457,7 +460,7 @@ function ConfirmDeletePatientModal({
   onCancel,
   onConfirm,
 }: {
-  patient: PatientPlain;
+  patient: PatientView;
   loading: boolean;
   error?: string;
   onCancel: () => void;
@@ -476,8 +479,7 @@ function ConfirmDeletePatientModal({
               Vous êtes sur le point de supprimer le patient{" "}
               <span className="font-semibold">
                 {patient.prenom} {patient.nom}
-              </span>
-              . Cette action entraînera la suppression définitive de tous les dossiers
+              </span>. Cette action entraînera la suppression définitive de tous les dossiers
               de soins associés, y compris leurs séances et documents.
               <br />
               <span className="font-medium">Cette opération est irréversible.</span>
