@@ -130,70 +130,39 @@ export default function Settings() {
   };
 
   const handleInvite = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setInviteMessage("");
-  if (!clientId) return;
+    e.preventDefault();
+    setInviteMessage("");
+    if (!clientId) return;
 
-  setInviteLoading(true);
-  try {
-    const { data, error } = await supabase.functions.invoke("invite-user", {
-      body: {
-        email: inviteEmail,
-        nom: inviteNom,
-        prenom: invitePrenom,
-        role: inviteRole,
-        client_id: clientId,
-      },
-    });
+    setInviteLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("invite-user", {
+        body: {
+          email: inviteEmail,
+          nom: inviteNom,
+          prenom: invitePrenom,
+          role: inviteRole,
+          client_id: clientId,
+        },
+      });
 
-    if (error) throw error;
-
-    switch (data?.status) {
-      case "success":
-        setInviteMessage(
-          `Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
-        );
-        setInviteNom("");
-        setInvitePrenom("");
-        setInviteEmail("");
-        setInviteRole("assistant");
-        break;
-
-      case "already_exists":
-        setInviteMessage(
-          `L'adresse ${inviteEmail} correspond déjà à un compte existant.`
-        );
-        break;
-
-      case "already_invited_recently":
-        setInviteMessage(
-          `Une invitation a déjà été envoyée récemment à ${inviteEmail}. Merci de patienter avant de réessayer.`
-        );
-        break;
-
-      case "rate_limited":
-        setInviteMessage(
-          `Trop d'invitations envoyées en peu de temps. Merci de patienter avant de réessayer.`
-        );
-        break;
-
-      default:
-        setInviteMessage(
-          `Erreur inattendue lors de l’invitation${
-            data?.message ? ` : ${data.message}` : ""
-          }.`
-        );
-        break;
+      if (error) throw error;
+      setInviteMessage(
+        `Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
+      );
+      setInviteNom("");
+      setInvitePrenom("");
+      setInviteEmail("");
+      setInviteRole("assistant");
+    } catch (err: any) {
+      console.error("Erreur invitation:", err);
+      setInviteMessage(
+        'Erreur lors de l’envoi de l’invitation. Vérifiez si la personne concernée a déjà reçu une invitation. Si besoin, contactez le support : <a href="mailto:support@taysirmed.tn" class="text-teal-600 underline">support@taysirmed.tn</a>'
+      );
+    } finally {
+      setInviteLoading(false);
     }
-  } catch (err: any) {
-    console.error("Erreur invitation:", err);
-    setInviteMessage("Erreur lors de l’envoi de l’invitation.");
-  } finally {
-    setInviteLoading(false);
-  }
-};
-
-
+  };
 
   const disabled = useMemo(() => !isAdmin, [isAdmin]);
 
@@ -266,7 +235,10 @@ export default function Settings() {
               </button>
             </form>
             {inviteMessage && (
-              <div className="text-sm text-gray-700">{inviteMessage}</div>
+              <div
+                className="text-sm text-gray-700"
+                dangerouslySetInnerHTML={{ __html: inviteMessage }}
+              />
             )}
           </div>
         )}
@@ -289,6 +261,29 @@ export default function Settings() {
             className="w-full max-w-xs px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-50"
           />
         </div>
+
+        {/* === Filtres par défaut === */}
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold text-gray-900">
+            Filtres par défaut — Tableau de bord des dossiers de soins
+          </h3>
+
+          {/* ... ton code de filtres reste inchangé ... */}
+
+          <button
+            onClick={saveAll}
+            disabled={loading || disabled}
+            className="flex items-center gap-2 px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-medium transition disabled:opacity-50"
+          >
+            <Save className="w-5 h-5" />
+            {loading ? "Enregistrement…" : "Enregistrer"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
         {/* === Filtres par défaut === */}
         <div className="space-y-4">
