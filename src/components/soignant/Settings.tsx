@@ -156,9 +156,7 @@ export default function Settings() {
       setInviteRole("assistant");
     } catch (err: any) {
       console.error("Erreur invitation:", err);
-      setInviteMessage(
-        'Erreur lors de l’envoi de l’invitation. Vérifiez si la personne concernée a déjà reçu une invitation. Si besoin, contactez le support : <a href="mailto:support@taysirmed.tn" class="text-teal-600 underline">support@taysirmed.tn</a>'
-      );
+      setInviteMessage("Erreur lors de l’envoi de l’invitation. Vérifiez si la personne conernée à déjà recu une invitation et si besoin contacter le support ");
     } finally {
       setInviteLoading(false);
     }
@@ -235,10 +233,7 @@ export default function Settings() {
               </button>
             </form>
             {inviteMessage && (
-              <div
-                className="text-sm text-gray-700"
-                dangerouslySetInnerHTML={{ __html: inviteMessage }}
-              />
+              <div className="text-sm text-gray-700">{inviteMessage}</div>
             )}
           </div>
         )}
