@@ -149,23 +149,23 @@ export default function Settings() {
     if (error) throw error;
 
     if (data?.status === "already_exists") {
-      setInviteMessage(`⚠️ L'adresse ${inviteEmail} correspond déjà à un compte existant.`);
+      setInviteMessage(`L'adresse ${inviteEmail} correspond déjà à un compte existant.`);
     } else if (data?.status === "already_invited") {
-      setInviteMessage(`⚠️ Une invitation est déjà en attente pour ${inviteEmail}.`);
+      setInviteMessage(`Une invitation est déjà en attente pour ${inviteEmail}.`);
     } else if (data?.status === "success") {
       setInviteMessage(
-        `✅ Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
+        `Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
       );
       setInviteNom("");
       setInvitePrenom("");
       setInviteEmail("");
       setInviteRole("assistant");
     } else {
-      setInviteMessage("❌ Erreur inattendue lors de l’invitation.");
+      setInviteMessage("Erreur inattendue lors de l’invitation.");
     }
   } catch (err: any) {
     console.error("Erreur invitation:", err);
-    setInviteMessage("❌ Erreur lors de l’envoi de l’invitation.");
+    setInviteMessage("Erreur lors de l’envoi de l’invitation.");
   } finally {
     setInviteLoading(false);
   }
