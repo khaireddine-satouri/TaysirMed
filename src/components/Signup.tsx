@@ -158,7 +158,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
                   <span>
                     <span className="font-medium">Médecin</span>
                     <span className="block text-sm text-gray-600">
-                      Gestion des <b>dossiers médicaux</b>, des rendez-vous et du personnel associé.
+                      Gestion en temps réel des <b>dossiers médicaux</b>, des rendez-vous et du personnel associé.
                     </span>
                   </span>
                 </label>
