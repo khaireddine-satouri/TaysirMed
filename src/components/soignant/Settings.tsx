@@ -130,37 +130,47 @@ export default function Settings() {
   };
 
   const handleInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setInviteMessage("");
-    if (!clientId) return;
+  e.preventDefault();
+  setInviteMessage("");
+  if (!clientId) return;
 
-    setInviteLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("invite-user", {
-        body: {
-          email: inviteEmail,
-          nom: inviteNom,
-          prenom: invitePrenom,
-          role: inviteRole,
-          client_id: clientId,
-        },
-      });
+  setInviteLoading(true);
+  try {
+    const { data, error } = await supabase.functions.invoke("invite-user", {
+      body: {
+        email: inviteEmail,
+        nom: inviteNom,
+        prenom: invitePrenom,
+        role: inviteRole,
+        client_id: clientId,
+      },
+    });
 
-      if (error) throw error;
+    if (error) throw error;
+
+    if (data?.status === "already_exists") {
+      setInviteMessage(`⚠️ L'adresse ${inviteEmail} correspond déjà à un compte existant.`);
+    } else if (data?.status === "already_invited") {
+      setInviteMessage(`⚠️ Une invitation est déjà en attente pour ${inviteEmail}.`);
+    } else if (data?.status === "success") {
       setInviteMessage(
-        `Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
+        `✅ Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
       );
       setInviteNom("");
       setInvitePrenom("");
       setInviteEmail("");
       setInviteRole("assistant");
-    } catch (err: any) {
-      console.error("Erreur invitation:", err);
-      setInviteMessage("Erreur lors de l’envoi de l’invitation.");
-    } finally {
-      setInviteLoading(false);
+    } else {
+      setInviteMessage("❌ Erreur inattendue lors de l’invitation.");
     }
-  };
+  } catch (err: any) {
+    console.error("Erreur invitation:", err);
+    setInviteMessage("❌ Erreur lors de l’envoi de l’invitation.");
+  } finally {
+    setInviteLoading(false);
+  }
+};
+
 
   const disabled = useMemo(() => !isAdmin, [isAdmin]);
 
