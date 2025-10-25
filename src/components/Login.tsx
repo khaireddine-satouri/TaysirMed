@@ -98,7 +98,7 @@ export default function Login({
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {/* Email */}
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-600 mb-2">
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
                 Email <span className="text-gray-400" aria-hidden>＊</span>
               </label>
               <div className="relative">
