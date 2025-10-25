@@ -33,20 +33,24 @@ export default function Settings() {
   const clientId = userBase?.client_id;
 
   const [joursInactivite, setJoursInactivite] = useState("4");
-  const [dashDefaultFilters, setDashDefaultFilters] =
-    useState<DashFilters>(FALLBACK_DASH_FILTERS);
+  const [dashDefaultFilters, setDashDefaultFilters] = useState<DashFilters>(
+    FALLBACK_DASH_FILTERS
+  );
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
   const isAdmin = userBase?.type_utilisateur === "admin";
 
-  // --- Invitation collaborateurs ---
+  // --- Invitation collaborateur ---
+  const [inviteNom, setInviteNom] = useState("");
+  const [invitePrenom, setInvitePrenom] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"assistant" | "secretaire">(
     "assistant"
   );
-  const [inviteMsg, setInviteMsg] = useState("");
+  const [inviteMessage, setInviteMessage] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
 
   useEffect(() => {
     if (clientId && isAdmin) {
@@ -125,33 +129,36 @@ export default function Settings() {
     }
   };
 
-  const inviteUser = async () => {
-    setInviteMsg("");
-    if (!inviteEmail || !clientId) {
-      setInviteMsg("Veuillez saisir une adresse email valide.");
-      return;
-    }
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInviteMessage("");
+    if (!clientId) return;
 
+    setInviteLoading(true);
     try {
-      const { error } = await supabase.auth.admin.inviteUserByEmail(
-        inviteEmail,
-        {
-          data: {
-            type_utilisateur: inviteRole,
-            type_client: "soignant",
-            client_id: clientId,
-          },
-        }
-      );
+      const { data, error } = await supabase.functions.invoke("invite-user", {
+        body: {
+          email: inviteEmail,
+          nom: inviteNom,
+          prenom: invitePrenom,
+          role: inviteRole,
+          client_id: clientId,
+        },
+      });
 
       if (error) throw error;
-      setInviteMsg(
-        `Une invitation a été envoyée à ${inviteEmail}. La personne sera ajoutée comme ${inviteRole}.`
+      setInviteMessage(
+        `Une invitation a été envoyée à ${inviteEmail}. La personne pourra créer son mot de passe et rejoindre votre équipe.`
       );
+      setInviteNom("");
+      setInvitePrenom("");
       setInviteEmail("");
+      setInviteRole("assistant");
     } catch (err: any) {
       console.error("Erreur invitation:", err);
-      setInviteMsg("Erreur lors de l’envoi de l’invitation.");
+      setInviteMessage("Erreur lors de l’envoi de l’invitation.");
+    } finally {
+      setInviteLoading(false);
     }
   };
 
@@ -172,47 +179,66 @@ export default function Settings() {
           </div>
         )}
 
-        {/* Section invitation collaborateurs */}
+        {/* === Section Invitation === */}
         {isAdmin && (
-          <div className="mb-8">
+          <div className="mb-10">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-teal-600" /> Ajouter un membre
+              <UserPlus className="w-5 h-5 text-teal-600" />
+              Ajouter un membre
             </h3>
-
-            <div className="flex flex-col sm:flex-row gap-3 items-start">
+            <form
+              onSubmit={handleInvite}
+              className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4"
+            >
+              <input
+                type="text"
+                placeholder="Nom"
+                value={inviteNom}
+                onChange={(e) => setInviteNom(e.target.value)}
+                required
+                className="px-4 py-2 border rounded-lg"
+              />
+              <input
+                type="text"
+                placeholder="Prénom"
+                value={invitePrenom}
+                onChange={(e) => setInvitePrenom(e.target.value)}
+                required
+                className="px-4 py-2 border rounded-lg"
+              />
               <input
                 type="email"
                 placeholder="Adresse email"
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg"
+                required
+                className="px-4 py-2 border rounded-lg md:col-span-2"
               />
               <select
                 value={inviteRole}
                 onChange={(e) =>
                   setInviteRole(e.target.value as "assistant" | "secretaire")
                 }
-                className="px-4 py-2 border border-gray-300 rounded-lg"
+                className="px-4 py-2 border rounded-lg"
               >
                 <option value="assistant">Assistant</option>
                 <option value="secretaire">Secrétaire</option>
               </select>
               <button
-                type="button"
-                onClick={inviteUser}
-                className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg"
+                type="submit"
+                disabled={inviteLoading}
+                className="bg-teal-600 hover:bg-teal-700 text-white py-2 px-4 rounded-lg md:col-span-2 disabled:opacity-50"
               >
-                Inviter
+                {inviteLoading ? "Envoi..." : "Envoyer l’invitation"}
               </button>
-            </div>
-
-            {inviteMsg && (
-              <p className="mt-3 text-sm text-gray-600">{inviteMsg}</p>
+            </form>
+            {inviteMessage && (
+              <div className="text-sm text-gray-700">{inviteMessage}</div>
             )}
           </div>
         )}
 
-        {/* Jours d'inactivité */}
+        {/* === Jours d'inactivité === */}
         <div className="space-y-2 mb-8">
           <label className="block text-sm font-medium text-gray-700">
             Jours d'inactivité
@@ -231,14 +257,14 @@ export default function Settings() {
           />
         </div>
 
-        {/* Filtres par défaut du tableau de bord */}
+        {/* === Filtres par défaut === */}
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-gray-900">
             Filtres par défaut — Tableau de bord des dossiers de soins
           </h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {/* Tous tes selects et inputs comme avant */}
+            {/* État */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 État
@@ -261,6 +287,7 @@ export default function Settings() {
               </select>
             </div>
 
+            {/* PEC Assurance */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 PEC Assurance
@@ -282,6 +309,7 @@ export default function Settings() {
               </select>
             </div>
 
+            {/* État PEC */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 État PEC
@@ -303,6 +331,7 @@ export default function Settings() {
               </select>
             </div>
 
+            {/* Paiement */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Paiement
@@ -324,6 +353,7 @@ export default function Settings() {
               </select>
             </div>
 
+            {/* Activité */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Activité
@@ -345,6 +375,7 @@ export default function Settings() {
               </select>
             </div>
 
+            {/* Date début */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Date début
@@ -363,6 +394,7 @@ export default function Settings() {
               />
             </div>
 
+            {/* Date fin */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Date fin
@@ -402,21 +434,6 @@ export default function Settings() {
             <Save className="w-5 h-5" />
             {loading ? "Enregistrement…" : "Enregistrer"}
           </button>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">À propos</h3>
-        <div className="space-y-2 text-sm text-gray-600">
-          <p>
-            <strong>Application :</strong> Cabinet Ayadi Radhouan
-          </p>
-          <p>
-            <strong>Version :</strong> 1.0.0
-          </p>
-          <p>
-            <strong>Description :</strong> Gestion des dossiers de soins
-          </p>
         </div>
       </div>
     </div>
