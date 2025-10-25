@@ -86,7 +86,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
             {/* Prénom */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Prénom <span className="text-red-500">*</span>
+                Prénom <span className="text-gray-600">*</span>
               </label>
               <input
                 type="text"
@@ -100,7 +100,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
             {/* Email */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Email <span className="text-red-500">*</span>
+                Email <span className="text-gray-600">*</span>
               </label>
               <input
                 type="email"
@@ -114,7 +114,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
             {/* Mot de passe */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Mot de passe <span className="text-red-500">*</span>
+                Mot de passe <span className="text-gray-600">*</span>
               </label>
               <input
                 type="password"
@@ -128,7 +128,7 @@ export default function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => voi
             {/* Type de professionnel */}
             <fieldset className="space-y-2">
               <legend className="block text-sm font-medium">
-                Type de professionnel <span className="text-red-500">*</span>
+                Type de professionnel <span className="text-gray-600">*</span>
               </legend>
               <div className="grid grid-cols-1 gap-2">
                 <label className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer">
