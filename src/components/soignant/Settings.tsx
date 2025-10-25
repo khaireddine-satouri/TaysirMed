@@ -235,10 +235,7 @@ export default function Settings() {
               </button>
             </form>
             {inviteMessage && (
-              <div
-                className="text-sm text-gray-700"
-                dangerouslySetInnerHTML={{ __html: inviteMessage }}
-              />
+              <div className="text-sm text-gray-700">{inviteMessage}</div>
             )}
           </div>
         )}
