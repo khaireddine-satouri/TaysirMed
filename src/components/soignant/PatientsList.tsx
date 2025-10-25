@@ -103,7 +103,7 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
       setLoading(true);
 
       // 1) On récupère la DEK (doit déjà être déverrouillée)
-      const dek = await KeyService.getCurrentDEK();
+      const dek = await KeyService.getDEK();
       if (!dek) {
         console.error("DEK indisponible — session de chiffrement verrouillée.");
         setPatients([]);
