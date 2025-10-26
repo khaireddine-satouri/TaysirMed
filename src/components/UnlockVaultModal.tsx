@@ -19,6 +19,7 @@ export default function UnlockVaultModal() {
 
   const [error, setError] = useState<string | null>(null);
   const [pin, setPin] = useState("");
+  const [closed, setClosed] = useState(false); // <-- ferme localement le modal après succès
 
   const isAdmin = userBase?.type_utilisateur === "admin";
 
@@ -53,7 +54,7 @@ export default function UnlockVaultModal() {
         return;
       }
 
-      // 2) L'utilisateur possède-t-il une enveloppe passphrase pour cette version ?
+      // 2) Enveloppes de l'utilisateur
       const { data: wraps, error: eW } = await supabase.rpc("get_my_tmk_wraps");
       if (eW) {
         console.error("get_my_tmk_wraps error:", eW);
@@ -68,8 +69,8 @@ export default function UnlockVaultModal() {
     })();
   }, [user?.id, userBase?.client_id]);
 
-  // Modal caché si déjà déverrouillé ou non connecté
-  if (unlocked || !user || !userBase) return null;
+  // Cache si déjà déverrouillé, non connecté, ou si on a fermé localement après succès
+  if (closed || unlocked || !user || !userBase) return null;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,10 +83,11 @@ export default function UnlockVaultModal() {
     }
 
     try {
-      // 1) Toujours tenter l’unlock en premier
+      // 1) Toujours tenter l’unlock d’abord
       await unlockWithPassphrase(pin);
       console.log("Unlocked OK");
-      return; // le modal se fermera (unlocked => true)
+      setClosed(true); // <-- fermeture locale immédiate
+      return;
     } catch (err: any) {
       const msg = String(err?.message || err);
 
@@ -105,6 +107,7 @@ export default function UnlockVaultModal() {
         try {
           await createInitialVaultWithPassphrase(pin);
           console.log("Vault created + unlocked");
+          setClosed(true); // <-- fermeture locale immédiate
           return;
         } catch (e2: any) {
           console.error("createInitialVaultWithPassphrase failed:", e2);
