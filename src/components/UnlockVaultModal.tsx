@@ -70,53 +70,48 @@ export default function UnlockVaultModal() {
   if (unlocked || !user || !userBase) return null;
 
   const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
+  e.preventDefault();
+  setError(null);
 
-    if (!/^\d{6}$/.test(pin)) {
-      setError("Le code secret doit contenir exactement 6 chiffres.");
-      return;
-    }
+  if (!/^\d{6}$/.test(pin)) {
+    setError("Le code secret doit contenir exactement 6 chiffres.");
+    return;
+  }
 
-    // Bloque tant qu'on ne sait pas s'il existe déjà une enveloppe
-    if (hasPassWrap === null) return;
+  try {
+    // 1) tenter l’unlock en premier
+    await unlockWithPassphrase(pin);
+    console.log("Unlocked OK");
+    return; // le modal se fermera automatiquement car `unlocked` passe à true
+  } catch (err: any) {
+    const msg = String(err?.message || err);
 
-    try {
-      // 1) Toujours tenter l'unlock d'abord
-      await unlockWithPassphrase(pin);
-      return;
-    } catch (err: any) {
-      const msg = String(err?.message || err);
+    // 2) fallback création si admin et si l’erreur indique pas d’enveloppe/pas de version
+    const canCreate = isAdmin && (
+      msg.includes("Aucune TMK active") ||
+      msg.includes("Aucune enveloppe TMK") ||
+      msg.toLowerCase().includes("no_auth_context") ||
+      msg.toLowerCase().includes("not found") ||
+      msg.toLowerCase().includes("no rows")
+    );
 
-      // 2) Si l'erreur est "pas d’enveloppe", on passe à la création (admin)
-      const noWrap =
-        msg.includes("Aucune enveloppe TMK") ||
-        msg.includes("wrap incomplet") ||
-        msg.toLowerCase().includes("no rows") ||
-        msg.toLowerCase().includes("not found");
-
-      if (noWrap) {
-        if (!isAdmin) {
-          setError("Le coffre n'est pas encore initialisé. Un administrateur doit d'abord l'initialiser.");
-          return;
-        }
-
-        // Laisse le contexte créer/initialiser la version si absente
-        try {
-          await createInitialVaultWithPassphrase(pin);
-          return;
-        } catch (e2: any) {
-          console.error("createInitialVaultWithPassphrase failed:", e2);
-          setError(e2?.message || "Erreur lors de la création du coffre.");
-          return;
-        }
+    if (canCreate) {
+      try {
+        await createInitialVaultWithPassphrase(pin);
+        console.log("Vault created + unlocked");
+        return;
+      } catch (e2: any) {
+        console.error("createInitialVaultWithPassphrase failed:", e2);
+        setError(e2?.message || "Erreur lors de la création du coffre.");
+        return;
       }
-
-      // 3) Autres erreurs => affiche
-      console.error("unlockWithPassphrase failed:", err);
-      setError(msg || "Erreur");
     }
-  };
+
+    console.error("unlockWithPassphrase failed:", err);
+    setError(msg || "Erreur");
+  }
+};
+
 
   const showCreate = hasPassWrap === false;
   const isLoadingState = hasPassWrap === null || unlocking;
