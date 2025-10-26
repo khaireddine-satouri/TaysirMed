@@ -1,7 +1,7 @@
 // src/App.tsx
 import { useEffect, useRef, useState } from "react";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
-import { KeyProvider } from "./contexts/KeyManager";
+import { KeyProvider } from "./contexts/KeyManager.tsx";
 
 // Pages Auth
 import Login from "./components/Login";
