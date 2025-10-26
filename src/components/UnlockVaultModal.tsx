@@ -82,15 +82,7 @@ export default function UnlockVaultModal() {
         return;
       }
 
-      // S'assurer qu'une version active existe
-      const { data: active, error: eAct } = await supabase.rpc("active_tmk_version");
-      if (eAct) throw eAct;
-
-      if (!active) {
-        const { error: eNew } = await supabase.rpc("rotate_tmk_version");
-        if (eNew) throw eNew;
-      }
-
+      // On délègue maintenant toute la création à createInitialVaultWithPassphrase
       await createInitialVaultWithPassphrase(pin);
     } catch (err: any) {
       console.error("UnlockVaultModal onSubmit error:", err);
@@ -146,7 +138,8 @@ export default function UnlockVaultModal() {
 
         {showCreate && !isAdmin && (
           <p className="text-xs text-gray-500 mt-2">
-            Seul un administrateur peut initialiser le coffre. Contactez votre administrateur.
+            Seul un administrateur peut initialiser le coffre. Contactez votre
+            administrateur.
           </p>
         )}
       </form>
