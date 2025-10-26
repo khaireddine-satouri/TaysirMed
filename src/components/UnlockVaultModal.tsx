@@ -1,5 +1,5 @@
 // src/components/UnlockVaultModal.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../contexts/AuthContext";
 import { useCrypto } from "../contexts/CryptoContext";
@@ -14,16 +14,26 @@ export default function UnlockVaultModal() {
   } = useCrypto();
 
   const [hasPassWrap, setHasPassWrap] = useState<boolean | null>(null);
+  const [activeVersion, setActiveVersion] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pin, setPin] = useState("");
 
   const isAdmin = userBase?.type_utilisateur === "admin";
+
+  // Diagnostic compact pour affichage
+  const diag = useMemo(() => {
+    const parts: string[] = [];
+    parts.push(`v=${activeVersion ?? "∅"}`);
+    parts.push(`wrap=${hasPassWrap === null ? "?" : hasPassWrap ? "oui" : "non"}`);
+    return parts.join(" • ");
+  }, [activeVersion, hasPassWrap]);
 
   useEffect(() => {
     (async () => {
       if (!user || !userBase) return;
       setError(null);
       setHasPassWrap(null); // état "chargement"
+      setActiveVersion(null);
 
       // 1) Version TMK active ?
       const { data: v, error: eV } = await supabase.rpc("active_tmk_version");
@@ -33,9 +43,10 @@ export default function UnlockVaultModal() {
         setHasPassWrap(null);
         return;
       }
-      const activeVersion: number | null = v ?? null;
+      const vActive: number | null = v ?? null;
+      setActiveVersion(vActive);
 
-      if (!activeVersion) {
+      if (!vActive) {
         // pas de TMK => création (admin)
         setHasPassWrap(false);
         return;
@@ -50,7 +61,7 @@ export default function UnlockVaultModal() {
         return;
       }
       const has = (wraps as any[] | null)?.some(
-        (r) => r.tmk_version === activeVersion && r.device_bound === false
+        (r) => r.tmk_version === vActive && r.device_bound === false
       );
       setHasPassWrap(!!has);
     })();
@@ -71,22 +82,39 @@ export default function UnlockVaultModal() {
     if (hasPassWrap === null) return;
 
     try {
-      if (hasPassWrap === true) {
-        await unlockWithPassphrase(pin);
-        return;
-      }
-
-      // Pas d’enveloppe => création initiale (réservée admin)
-      if (!isAdmin) {
-        setError("Le coffre n'est pas encore initialisé. Un administrateur doit d'abord l'initialiser.");
-        return;
-      }
-
-      // On délègue maintenant toute la création à createInitialVaultWithPassphrase
-      await createInitialVaultWithPassphrase(pin);
+      // 1) Toujours tenter l'unlock d'abord
+      await unlockWithPassphrase(pin);
+      return;
     } catch (err: any) {
-      console.error("UnlockVaultModal onSubmit error:", err);
-      setError(err?.message || "Erreur");
+      const msg = String(err?.message || err);
+
+      // 2) Si l'erreur est "pas d’enveloppe", on passe à la création (admin)
+      const noWrap =
+        msg.includes("Aucune enveloppe TMK") ||
+        msg.includes("wrap incomplet") ||
+        msg.toLowerCase().includes("no rows") ||
+        msg.toLowerCase().includes("not found");
+
+      if (noWrap) {
+        if (!isAdmin) {
+          setError("Le coffre n'est pas encore initialisé. Un administrateur doit d'abord l'initialiser.");
+          return;
+        }
+
+        // Laisse le contexte créer/initialiser la version si absente
+        try {
+          await createInitialVaultWithPassphrase(pin);
+          return;
+        } catch (e2: any) {
+          console.error("createInitialVaultWithPassphrase failed:", e2);
+          setError(e2?.message || "Erreur lors de la création du coffre.");
+          return;
+        }
+      }
+
+      // 3) Autres erreurs => affiche
+      console.error("unlockWithPassphrase failed:", err);
+      setError(msg || "Erreur");
     }
   };
 
@@ -108,6 +136,9 @@ export default function UnlockVaultModal() {
           mémorisez-le. Il n’est <em>pas</em> stocké côté serveur. Sans ce code, les données
           chiffrées ne peuvent pas être récupérées.
         </div>
+
+        {/* Petit diagnostic utile en dev (retirez en prod si vous voulez) */}
+        <div className="text-xs text-gray-500 mb-2">état: {diag}</div>
 
         <input
           type="text"
