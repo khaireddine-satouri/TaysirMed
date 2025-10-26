@@ -9,8 +9,6 @@ import {
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase, type UserBase } from "../lib/supabase";
-
-// 🔐 Key management (DEK en mémoire, dérivée/chargée au signIn)
 import { useKeys } from "./KeyManager";
 
 type AuthContextType = {
@@ -18,6 +16,7 @@ type AuthContextType = {
   user: User | null;
   userBase: UserBase | null;
   loading: boolean;
+  authReady: boolean; // session + userBase connus (pas la DEK)
   isAdmin: boolean;
   isSoignant: boolean;
   isMedecin: boolean;
@@ -30,6 +29,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   userBase: null,
   loading: true,
+  authReady: false,
   isAdmin: false,
   isSoignant: false,
   isMedecin: false,
@@ -41,9 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [userBase, setUserBase] = useState<UserBase | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // 🔐 accès au KeyManager (contient la DEK en mémoire, jamais persistée)
-  const keys = useKeys();
+  const keys = useKeys(); // contient DEK (en mémoire) + méthodes
 
   useEffect(() => {
     const init = async () => {
@@ -55,8 +53,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (data.session?.user) {
           await loadUserBase(data.session.user.id);
-          // ⚠️ Ici on ne connaît pas le mot de passe ⇒ pas de deriveAndLoad.
-          // La DEK sera initialisée soit via signIn(password), soit via SetInitialPassword.
         } else {
           setUserBase(null);
         }
@@ -66,24 +62,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
     init();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, sess) => {
-      setSession(sess ?? null);
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
+      (async () => {
+        setSession(sess ?? null);
 
-      if (!sess?.user) {
-        setUserBase(null);
-        // 🔐 Purge mémoire à la déconnexion
-        keys.clear();
-        return;
-      }
+        if (!sess?.user) {
+          setUserBase(null);
+          keys.clear(); // purge DEK mémoire
+          return;
+        }
 
-      // Mise à jour du userBase au changement d’état (ex: refresh du token, recovery complété)
-      await loadUserBase(sess.user.id);
-      // ⚠️ Ne PAS appeler deriveAndLoad ici : il faut le mot de passe clair.
+        try {
+          await loadUserBase(sess.user.id);
+        } catch {
+          // évite de faire planter l'effet
+        }
+        // NB: deriveAndLoad non appelé ici (il faut le mot de passe).
+      })();
     });
 
     return () => {
       try {
-        sub?.subscription?.unsubscribe();
+        sub?.subscription?.unsubscribe?.();
       } catch {
         // no-op
       }
@@ -104,11 +104,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUserBase((data as UserBase) ?? null);
   };
 
-  /**
-   * Authentifie l'utilisateur via Supabase, vérifie que son client est actif,
-   * puis 🔐 dérive le KEK à partir du mot de passe et déverrouille la DEK (KeyManager).
-   * La DEK reste en mémoire (jamais persistée).
-   */
   const signIn = async (email: string, password: string) => {
     // 1) Auth Supabase
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -117,7 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     if (error) throw error;
 
-    // 2) Vérification du client (tenant) actif
+    // 2) Vérif tenant
     if (data.user) {
       const { data: ub, error: ubErr } = await supabase
         .from("users_base")
@@ -126,7 +121,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
 
       if (ubErr) {
-        // on se déconnecte proprement si l'appel échoue
         await supabase.auth.signOut();
         throw ubErr;
       }
@@ -144,7 +138,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           (e as any).cause = clientErr;
           throw e;
         }
-
         if (client?.statut === "inactif") {
           await supabase.auth.signOut();
           const err = new Error("INACTIVE_CLIENT");
@@ -154,32 +147,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // 3) 🔐 Dérivation & chargement de la DEK via KeyManager
+    // 3) 🔐 dériver KEK & déverrouiller DEK
     try {
       await keys.deriveAndLoad(password, data.user!.id);
     } catch (e) {
-      // Si l'étape crypto échoue : on nettoie tout et on renvoie une erreur claire
       await supabase.auth.signOut();
-      const err = new Error("KEY_DERIVATION_FAILED");
+      const err = new Error("KEY_DERIVATION_FAILED"); // ex: mauvais mot de passe, matériel manquant
       (err as any).cause = e;
       throw err;
     }
 
-    // 4) Hydrate le userBase (utile quand signIn est appelé depuis un écran de login)
+    // 4) Hydrater userBase
     await loadUserBase(data.user!.id);
   };
 
-  /**
-   * Déconnexion : purge la DEK en mémoire puis signOut Supabase.
-   */
   const signOut = async () => {
-    // 🔐 purge mémoire
-    keys.clear();
-
+    keys.clear(); // purge DEK
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
-
-    // reset local state
     setUserBase(null);
     setSession(null);
   };
@@ -190,6 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user: session?.user ?? null,
       userBase,
       loading,
+      authReady: !loading && !!session && !!userBase,
       isAdmin: userBase?.type_utilisateur === "admin",
       isSoignant: userBase?.type_client === "soignant",
       isMedecin: userBase?.type_client === "medecin",
