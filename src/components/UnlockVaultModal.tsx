@@ -23,9 +23,9 @@ export default function UnlockVaultModal() {
     (async () => {
       if (!user || !userBase) return;
       setError(null);
-      setHasPassWrap(null); // indique "chargement"
+      setHasPassWrap(null); // état "chargement"
 
-      // 1) Version active ?
+      // 1) Version TMK active ?
       const { data: v, error: eV } = await supabase.rpc("active_tmk_version");
       if (eV) {
         console.error("active_tmk_version error:", eV);
@@ -36,12 +36,12 @@ export default function UnlockVaultModal() {
       const activeVersion: number | null = v ?? null;
 
       if (!activeVersion) {
-        // pas de TMK : mode création (admin)
+        // pas de TMK => création (admin)
         setHasPassWrap(false);
         return;
       }
 
-      // 2) Enveloppe passphrase pour cette version ?
+      // 2) L'utilisateur possède-t-il une enveloppe passphrase pour cette version ?
       const { data: wraps, error: eW } = await supabase.rpc("get_my_tmk_wraps");
       if (eW) {
         console.error("get_my_tmk_wraps error:", eW);
@@ -67,7 +67,7 @@ export default function UnlockVaultModal() {
       return;
     }
 
-    // Empêche toute action tant que nous ne savons pas si une enveloppe existe
+    // Bloque tant qu'on ne sait pas s'il existe déjà une enveloppe
     if (hasPassWrap === null) return;
 
     try {
@@ -78,13 +78,11 @@ export default function UnlockVaultModal() {
 
       // Pas d’enveloppe => création initiale (réservée admin)
       if (!isAdmin) {
-        setError(
-          "Le coffre n'est pas encore initialisé. Un administrateur doit d'abord l'initialiser."
-        );
+        setError("Le coffre n'est pas encore initialisé. Un administrateur doit d'abord l'initialiser.");
         return;
       }
 
-      // S'assurer qu'une version est active ; si elle n'existe pas, on la crée (RPC SECURITY DEFINER)
+      // S'assurer qu'une version active existe
       const { data: active, error: eAct } = await supabase.rpc("active_tmk_version");
       if (eAct) throw eAct;
 
@@ -119,7 +117,6 @@ export default function UnlockVaultModal() {
           chiffrées ne peuvent pas être récupérées.
         </div>
 
-        {/* Champ PIN + bouton */}
         <input
           type="text"
           inputMode="numeric"
@@ -143,15 +140,13 @@ export default function UnlockVaultModal() {
           {isLoadingState ? "..." : showCreate ? "Créer et ouvrir" : "Déverrouiller"}
         </button>
 
-        {/* Indication de statut */}
         {hasPassWrap === null && (
           <p className="text-xs text-gray-500 mt-2">Vérification du coffre…</p>
         )}
 
         {showCreate && !isAdmin && (
           <p className="text-xs text-gray-500 mt-2">
-            Seul un administrateur peut initialiser le coffre. Contactez votre
-            administrateur.
+            Seul un administrateur peut initialiser le coffre. Contactez votre administrateur.
           </p>
         )}
       </form>
