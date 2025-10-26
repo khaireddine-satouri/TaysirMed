@@ -1,6 +1,7 @@
 // src/App.tsx
 import { useEffect, useRef, useState } from "react";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { KeyProvider } from "./contexts/KeyManager";
 
 // Pages Auth
 import Login from "./components/Login";
@@ -39,7 +40,6 @@ type SoignantView =
   | "tickets_collab"
   | "tickets_admin";
 
-// --- utilitaire pour lire le hash Supabase
 function parseHash(): Record<string, string> {
   if (typeof window === "undefined") return {};
   const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
@@ -53,7 +53,6 @@ function AppContent() {
   const { user, userBase, loading } = useAuth();
   const [showSignup, setShowSignup] = useState(false);
 
-  // navigation soignant
   const [currentView, setCurrentView] = useState<SoignantView>("patients");
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [selectedDossier, setSelectedDossier] = useState<DossierSoin | null>(null);
@@ -63,7 +62,6 @@ function AppContent() {
   const isAdmin = userBase?.type_utilisateur === "admin";
   const isAssistant = userBase?.type_utilisateur === "assistant";
 
-  // détection des liens d'invitation/récupération
   const [authType, setAuthType] = useState<"invite" | "recovery" | null>(null);
   useEffect(() => {
     const h = parseHash();
@@ -71,7 +69,6 @@ function AppContent() {
     if (t === "invite" || t === "recovery") setAuthType(t);
   }, []);
 
-  // vue par défaut soignant
   useEffect(() => {
     if (loading || !userBase) return;
     if (!hasInitialized.current) {
@@ -92,12 +89,10 @@ function AppContent() {
     );
   }
 
-  // cas 1 : lien d’invitation ou de réinitialisation
   if (authType && user) {
     return <SetInitialPassword mode={authType} onDone={() => setAuthType(null)} />;
   }
 
-  // cas 2 : non connecté
   if (!user || !userBase) {
     hasInitialized.current = false;
     return showSignup ? (
@@ -107,7 +102,6 @@ function AppContent() {
     );
   }
 
-  /** navigation principale */
   const handleNavigate = (view: string) => {
     setCurrentView(view as SoignantView);
     setSelectedPatient(null);
@@ -115,7 +109,6 @@ function AppContent() {
     if (view === "dashboard") setDashOverrideFilters(null);
   };
 
-  /** sélections patients / dossiers */
   const handleSelectPatient = (patient: Patient) => {
     setSelectedPatient(patient);
     setSelectedDossier(null);
@@ -131,7 +124,6 @@ function AppContent() {
     setSelectedDossier(null);
   };
 
-  /** ouverture via tickets */
   const openPatientById = async (patientId: string) => {
     const { data } = await supabase.from("patients").select("*").eq("id", patientId).maybeSingle();
     if (data) {
@@ -153,13 +145,11 @@ function AppContent() {
     }
   };
 
-  /** depuis analytics vers dashboard */
   const openDashboardWithFilters = (filters: DashboardFilters) => {
     setDashOverrideFilters(filters);
     setCurrentView("dashboard");
   };
 
-  /** rendu logique côté soignant */
   const renderSoignantContent = () => {
     if (selectedDossier && selectedPatient) {
       return <DossierDetail dossier={selectedDossier} patient={selectedPatient} onBack={handleBackToDossiers} />;
@@ -229,7 +219,6 @@ function AppContent() {
     }
   };
 
-  // ==== rendu final ====
   if (userBase.type_client === "soignant") {
     return (
       <SoignantLayout currentView={currentView} onNavigate={handleNavigate}>
@@ -251,8 +240,10 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <KeyProvider>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </KeyProvider>
   );
 }
