@@ -2,10 +2,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 
-// Crypto (zéro-knowledge)
-import { CryptoProvider, useCrypto } from "./contexts/CryptoContext";
-import UnlockVaultModal from "./components/UnlockVaultModal";
-
 // Pages Auth
 import Login from "./components/Login";
 import Signup from "./components/Signup";
@@ -30,7 +26,7 @@ import Planning from "./components/soignant/Planning";
 // Médecin
 import RendezVousList from "./components/medecin/RendezVousList";
 
-// Types / API
+// Types
 import { supabase, PatientCipher as Patient, DossierSoins as DossierSoin } from "./lib/supabase";
 
 type SoignantView =
@@ -53,9 +49,8 @@ function parseHash(): Record<string, string> {
   return out;
 }
 
-function AppContentInner() {
+function AppContent() {
   const { user, userBase, loading } = useAuth();
-  const { unlocked } = useCrypto(); // état de déverrouillage TMK (en mémoire)
   const [showSignup, setShowSignup] = useState(false);
 
   // navigation soignant
@@ -235,35 +230,23 @@ function AppContentInner() {
   };
 
   // ==== rendu final ====
-  const main =
-    userBase.type_client === "soignant" ? (
+  if (userBase.type_client === "soignant") {
+    return (
       <SoignantLayout currentView={currentView} onNavigate={handleNavigate}>
         {renderSoignantContent()}
       </SoignantLayout>
-    ) : userBase.type_client === "medecin" ? (
+    );
+  }
+
+  if (userBase.type_client === "medecin") {
+    return (
       <MedecinLayout currentView={currentView} onNavigate={setCurrentView}>
         {currentView === "rendezvous" && <RendezVousList />}
       </MedecinLayout>
-    ) : (
-      <div>Type de client inconnu</div>
     );
+  }
 
-  return (
-    <>
-      {main}
-      {/* Modal de déverrouillage : affiché seulement si connecté et coffre non déverrouillé */}
-      {user && userBase && !unlocked && <UnlockVaultModal />}
-    </>
-  );
-}
-
-function AppContent() {
-  // CryptoProvider doit envelopper tout ce qui consomme useCrypto()
-  return (
-    <CryptoProvider>
-      <AppContentInner />
-    </CryptoProvider>
-  );
+  return <div>Type de client inconnu</div>;
 }
 
 export default function App() {
