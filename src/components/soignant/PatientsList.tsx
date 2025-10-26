@@ -1,51 +1,39 @@
-// src/components/soignant/PatientsList.tsx
-import { useState, useEffect } from "react";
-import { supabase, PatientCipher as Patient } from "../../lib/supabase";
-import { Search, Plus, User, Phone, X, Trash2 } from "lucide-react";
-import { useAuth } from "../../contexts/AuthContext";
-import * as EncryptionService from "../../crypto/EncryptionService";
-import * as KeyService from "../../crypto/KeyService";
+import { useState, useEffect } from 'react';
+import { supabase, Patient } from '../../lib/supabase';
+import { Search, Plus, User, Phone, X, Trash2 } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import PhotoUploadSection from './PhotoUploadSection';
 
-/** Vue claire utilisée seulement côté UI (jamais envoyée au backend) */
-type PatientView = {
-  id: string;
-  nom: string;
-  prenom: string;
-  telephone: string;
-  telephone_2?: string | null;
-  created_at: string;
-};
+interface PatientWithUrl extends Patient {
+  signedUrl?: string | null;
+}
 
 interface PatientsListProps {
-  onSelectPatient: (patient: PatientView) => void;
+  onSelectPatient: (patient: PatientWithUrl) => void;
 }
 
 export default function PatientsList({ onSelectPatient }: PatientsListProps) {
   const { user, userBase } = useAuth();
-  const isAdmin = userBase?.type_utilisateur === "admin";
+  const isAdmin = userBase?.type_utilisateur === 'admin';
 
-  const [patients, setPatients] = useState<PatientView[]>([]);
-  const [filteredPatients, setFilteredPatients] = useState<PatientView[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [patients, setPatients] = useState<PatientWithUrl[]>([]);
+  const [filteredPatients, setFilteredPatients] = useState<PatientWithUrl[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
 
   // État suppression
-  const [patientToDelete, setPatientToDelete] = useState<PatientView | null>(null);
+  const [patientToDelete, setPatientToDelete] = useState<PatientWithUrl | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string>("");
-
-  // Message de verrouillage (si DEK introuvable)
-  const [secureMsg, setSecureMsg] = useState<string>("");
+  const [deleteError, setDeleteError] = useState<string>('');
 
   useEffect(() => {
     loadPatients();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Recherche côté UI
   useEffect(() => {
-    if (searchTerm.trim() === "") {
+    if (searchTerm.trim() === '') {
       setFilteredPatients(patients);
       return;
     }
@@ -53,13 +41,13 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
     const normalize = (s: string) =>
       s
         .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
         .trim();
 
     const term = normalize(searchTerm);
     const tokens = term.split(/\s+/).filter(Boolean);
-    const digits = searchTerm.replace(/\D/g, "");
+    const digits = searchTerm.replace(/\D/g, '');
 
     const next = patients.filter((p) => {
       const first = normalize(p.prenom);
@@ -73,8 +61,10 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
 
       const phoneMatch =
         digits.length >= 3 &&
-        ((p.telephone || "").replace(/\D/g, "").includes(digits) ||
-          (p.telephone_2 ? p.telephone_2.replace(/\D/g, "").includes(digits) : false));
+        (
+          (p.telephone || '').replace(/\D/g, '').includes(digits) ||
+          (p.telephone_2 ? p.telephone_2.replace(/\D/g, '').includes(digits) : false)
+        );
 
       return allTokensInFull || simpleMatch || phoneMatch;
     });
@@ -82,71 +72,31 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
     setFilteredPatients(next);
   }, [searchTerm, patients]);
 
-  const ensureDEK = async (): Promise<CryptoKey | null> => {
-    // DEK déjà en mémoire ?
-    let dek = await KeyService.getDEK();
-    if (dek) return dek;
-
-    // Tenter bootstrap (récup share existant ou création)
-    const res = await KeyService.bootstrapDEK();
-    if (res.status === "ok_existing" || res.status === "ok_new") {
-      dek = await KeyService.getDEK();
-      return dek;
-    }
-
-    // Sinon, impossible pour l’instant
-    setSecureMsg(
-      "La session sécurisée est verrouillée. Veuillez réessayer ou déverrouiller votre coffre (WebAuthn)."
-    );
-    return null;
-  };
-
   const loadPatients = async () => {
     try {
       setLoading(true);
-      setSecureMsg("");
-
-      const dek = await ensureDEK();
-      if (!dek) {
-        console.error("DEK indisponible — session de chiffrement verrouillée.");
-        setPatients([]);
-        setFilteredPatients([]);
-        return;
-      }
-
-      // Sélection des colonnes chiffrées *_ct
       const { data, error } = await supabase
-        .from("patients")
-        .select("id, nom_ct, prenom_ct, telephone_ct, telephone2_ct, created_at")
-        .order("created_at", { ascending: false });
+        .from('patients')
+        .select('id, nom, prenom, telephone, telephone_2, photo_path, client_id, created_at')
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
 
-      // Déchiffrement côté client
-      const views: PatientView[] = await Promise.all(
-        (data || []).map(async (row: Patient) => {
-          const nom = await EncryptionService.decryptString(dek, row.nom_ct);
-          const prenom = await EncryptionService.decryptString(dek, row.prenom_ct);
-          const telephone = await EncryptionService.decryptString(dek, row.telephone_ct);
-          const telephone_2 = row.telephone2_ct
-            ? await EncryptionService.decryptString(dek, row.telephone2_ct)
-            : null;
-
-          return {
-            id: row.id,
-            nom,
-            prenom,
-            telephone,
-            telephone_2,
-            created_at: row.created_at,
-          };
+      // Générer la signed URL pour chaque patient (sans cache mémoire)
+      const patientsWithUrls: PatientWithUrl[] = await Promise.all(
+        (data || []).map(async (p: Patient) => {
+          if (!p.photo_path) return { ...p, signedUrl: null };
+          const { data: signed, error: signErr } = await supabase.storage
+            .from('patient_photos')
+            .createSignedUrl(p.photo_path, 600); // 10 min
+          return { ...p, signedUrl: signErr ? null : signed?.signedUrl || null };
         })
       );
 
-      setPatients(views);
-      setFilteredPatients(views);
+      setPatients(patientsWithUrls);
+      setFilteredPatients(patientsWithUrls);
     } catch (err) {
-      console.error("Erreur chargement patients:", err);
+      console.error('Erreur chargement patients:', err);
     } finally {
       setLoading(false);
     }
@@ -158,34 +108,34 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
   const handleDeletePatient = async () => {
     if (!patientToDelete) return;
     setDeleting(true);
-    setDeleteError("");
+    setDeleteError('');
 
     try {
       const session = (await supabase.auth.getSession()).data.session;
       if (!session) {
-        setDeleteError("Session expirée. Veuillez vous reconnecter.");
+        setDeleteError('Session expirée. Veuillez vous reconnecter.');
         setDeleting(false);
         return;
       }
 
       const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-patient`;
       const res = await fetch(fnUrl, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ patientId: patientToDelete.id }),
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Erreur lors de la suppression");
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de la suppression');
 
       setPatientToDelete(null);
       await loadPatients();
     } catch (err: any) {
-      console.error("Erreur suppression patient:", err);
-      setDeleteError(err.message || "La suppression a échoué.");
+      console.error('Erreur suppression patient:', err);
+      setDeleteError(err.message || 'La suppression a échoué.');
     } finally {
       setDeleting(false);
     }
@@ -201,20 +151,13 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
 
   return (
     <div className="space-y-4">
-      {/* Alerte sécurité si coffre non déverrouillé */}
-      {secureMsg && (
-        <div className="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
-          {secureMsg}
-        </div>
-      )}
-
       {/* Barre de recherche + bouton ajouter */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
           <input
             type="text"
-            placeholder="Rechercher un patient (nom, prénom, téléphone)…"
+            placeholder="Rechercher un patient (nom, prénom, téléphone)..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
@@ -239,7 +182,7 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
                 className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden"
                 title="Voir le patient"
               >
-                <User className="w-6 h-6 text-teal-600" />
+                <PatientAvatar patient={patient} />
               </button>
 
               <div className="flex-1 min-w-0">
@@ -281,7 +224,7 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
 
       {filteredPatients.length === 0 && (
         <div className="text-center py-12 text-gray-500">
-          {searchTerm ? "Aucun patient trouvé" : "Aucun patient enregistré"}
+          {searchTerm ? 'Aucun patient trouvé' : 'Aucun patient enregistré'}
         </div>
       )}
 
@@ -293,8 +236,8 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
             setShowAddModal(false);
             loadPatients();
           }}
-          userId={user?.id || ""}
-          clientId={userBase?.client_id || ""}
+          userId={user?.id || ''}
+          clientId={userBase?.client_id || ''}
         />
       )}
 
@@ -312,7 +255,24 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
   );
 }
 
-/* ======= Modal Ajout Patient (chiffre les champs avant insert) ======= */
+/* ======= Avatar : consomme la signedUrl déjà fournie ======= */
+function PatientAvatar({ patient }: { patient: PatientWithUrl }) {
+  if (!patient.signedUrl) {
+    return <User className="w-6 h-6 text-teal-600" />;
+  }
+
+  return (
+    <img
+      src={patient.signedUrl}
+      alt={`${patient.prenom} ${patient.nom}`}
+      className="w-12 h-12 rounded-full object-cover"
+      loading="lazy"
+      referrerPolicy="no-referrer"
+    />
+  );
+}
+
+/* ======= Modal Ajout Patient ======= */
 
 interface AddPatientModalProps {
   onClose: () => void;
@@ -322,43 +282,82 @@ interface AddPatientModalProps {
 }
 
 function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientModalProps) {
-  const [nom, setNom] = useState("");
-  const [prenom, setPrenom] = useState("");
-  const [telephone, setTelephone] = useState("");
-  const [telephone2, setTelephone2] = useState("");
+  const [nom, setNom] = useState('');
+  const [prenom, setPrenom] = useState('');
+  const [telephone, setTelephone] = useState('');
+  const [telephone2, setTelephone2] = useState(''); // NEW
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
+
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onloadend = () => setPhotoPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const handlePhotoCapture = (file: File) => {
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onloadend = () => setPhotoPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
+    setError('');
     setLoading(true);
 
     try {
-      const dek = await KeyService.getDEK();
-      if (!dek) throw new Error("Coffre non déverrouillé. Veuillez réessayer.");
-
-      const nom_ct = await EncryptionService.encryptString(dek, nom.trim());
-      const prenom_ct = await EncryptionService.encryptString(dek, prenom.trim());
-      const telephone_ct = await EncryptionService.encryptString(dek, telephone.trim());
-      const telephone2_ct = telephone2.trim()
-        ? await EncryptionService.encryptString(dek, telephone2.trim())
-        : null;
-
-      const { error: insertError } = await supabase.from("patients").insert({
-        nom_ct,
-        prenom_ct,
-        telephone_ct,
-        telephone2_ct,
-        created_by: userId || null,
-        client_id: clientId,
-      });
+      // 1) créer le patient (sans photo) pour récupérer l'ID
+      const { data: inserted, error: insertError } = await supabase
+        .from('patients')
+        .insert({
+          nom: nom.trim(),
+          prenom: prenom.trim(),
+          telephone: telephone.trim(),
+          telephone_2: telephone2.trim() || null, // NEW
+          created_by: userId,
+          client_id: clientId,
+        })
+        .select('id')
+        .single();
 
       if (insertError) throw insertError;
+      const patientId = inserted.id as string;
+
+      // 2) si photo, uploader
+      if (photoFile) {
+        const ext = (photoFile.name.split('.').pop() || 'jpg').toLowerCase();
+        const filename = `${crypto.randomUUID()}.${ext}`;
+        const storagePath = `${clientId}/${patientId}/${filename}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('patient_photos')
+          .upload(storagePath, photoFile, {
+            contentType: photoFile.type || 'application/octet-stream',
+            upsert: false,
+            cacheControl: '3600',
+          });
+
+        if (uploadError) throw uploadError;
+
+        // 3) maj du path
+        const { error: updError } = await supabase
+          .from('patients')
+          .update({ photo_path: storagePath })
+          .eq('id', patientId);
+
+        if (updError) throw updError;
+      }
 
       onSuccess();
     } catch (err: any) {
-      setError(err.message || "Erreur lors de la création du patient");
+      setError(err.message || 'Erreur lors de la création du patient');
     } finally {
       setLoading(false);
     }
@@ -375,6 +374,12 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <PhotoUploadSection
+            photoPreview={photoPreview}
+            onPhotoChange={handlePhotoChange}
+            onPhotoCapture={handlePhotoCapture}
+          />
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Nom *</label>
             <input
@@ -409,9 +414,7 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Téléphone 2 (optionnel)
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Téléphone 2 (optionnel)</label>
             <input
               type="tel"
               value={telephone2}
@@ -439,7 +442,7 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
               disabled={loading}
               className="flex-1 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition disabled:opacity-50"
             >
-              {loading ? "Création..." : "Créer"}
+              {loading ? 'Création...' : 'Créer'}
             </button>
           </div>
         </form>
@@ -457,7 +460,7 @@ function ConfirmDeletePatientModal({
   onCancel,
   onConfirm,
 }: {
-  patient: PatientView;
+  patient: PatientWithUrl;
   loading: boolean;
   error?: string;
   onCancel: () => void;
@@ -473,11 +476,10 @@ function ConfirmDeletePatientModal({
           <div className="flex-1">
             <h3 className="text-lg font-semibold text-gray-900">Confirmer la suppression</h3>
             <p className="text-sm text-gray-700 mt-1">
-              Vous êtes sur le point de supprimer le patient{" "}
+              Vous êtes sur le point de supprimer le patient{' '}
               <span className="font-semibold">
                 {patient.prenom} {patient.nom}
-              </span>
-              . Cette action entraînera la suppression définitive de tous les dossiers
+              </span>. Cette action entraînera la suppression définitive de tous les dossiers
               de soins associés, y compris leurs séances et documents.
               <br />
               <span className="font-medium">Cette opération est irréversible.</span>
@@ -505,7 +507,7 @@ function ConfirmDeletePatientModal({
             disabled={loading}
             className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition disabled:opacity-50"
           >
-            {loading ? "Suppression…" : "Supprimer"}
+            {loading ? 'Suppression…' : 'Supprimer'}
           </button>
         </div>
       </div>
