@@ -6,7 +6,12 @@ import { useCrypto } from "../contexts/CryptoContext";
 
 export default function UnlockVaultModal() {
   const { user, userBase } = useAuth();
-  const { unlocked, unlocking, unlockWithPassphrase, createInitialVaultWithPassphrase } = useCrypto();
+  const {
+    unlocked,
+    unlocking,
+    unlockWithPassphrase,
+    createInitialVaultWithPassphrase,
+  } = useCrypto();
 
   const [hasPassWrap, setHasPassWrap] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +24,7 @@ export default function UnlockVaultModal() {
       if (!user || !userBase) return;
       setError(null);
 
-      // 1) quelle version active ?
+      // 1) Version active ?
       const { data: v, error: eV } = await supabase.rpc("active_tmk_version");
       if (eV) {
         setError(eV.message);
@@ -28,13 +33,13 @@ export default function UnlockVaultModal() {
       }
       const activeVersion: number | null = v ?? null;
 
-      // 2) si aucune version, on indiquera "création" (admin)
       if (!activeVersion) {
+        // pas de TMK : mode création (admin)
         setHasPassWrap(false);
         return;
       }
 
-      // 3) l'utilisateur a-t-il une enveloppe passphrase pour cette version ?
+      // 2) Enveloppe passphrase pour cette version ?
       const { data: wraps, error: eW } = await supabase.rpc("get_my_tmk_wraps");
       if (eW) {
         setError(eW.message);
@@ -54,7 +59,6 @@ export default function UnlockVaultModal() {
     e.preventDefault();
     setError(null);
 
-    // Validation stricte PIN 6 chiffres
     if (!/^\d{6}$/.test(pin)) {
       setError("Le code secret doit contenir exactement 6 chiffres.");
       return;
@@ -62,29 +66,28 @@ export default function UnlockVaultModal() {
 
     try {
       if (hasPassWrap) {
-        // Déverrouiller la TMK existante
         await unlockWithPassphrase(pin);
         return;
       }
 
-      // Pas d’enveloppe côté utilisateur => création initiale
+      // Pas d’enveloppe => création initiale (réservée admin)
       if (!isAdmin) {
-        setError("Le coffre n'est pas encore initialisé. Un administrateur doit d'abord l'initialiser.");
+        setError(
+          "Le coffre n'est pas encore initialisé. Un administrateur doit d'abord l'initialiser."
+        );
         return;
       }
 
-      // S’assurer qu’une version TMK active existe (création v1 au besoin)
-      const { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
-      let activeVersion: number | null = vActive ?? null;
-      if (eActive) throw eActive;
+      // S'assurer qu'une version est active ; si le backend est déjà corrigé SECURITY DEFINER,
+      // cet appel fonctionne en étant connecté via l'app
+      const { data: active, error: eAct } = await supabase.rpc("active_tmk_version");
+      if (eAct) throw eAct;
 
-      if (!activeVersion) {
-        const { data: vNew, error: eNew } = await supabase.rpc("rotate_tmk_version");
+      if (!active) {
+        const { error: eNew } = await supabase.rpc("rotate_tmk_version");
         if (eNew) throw eNew;
-        activeVersion = vNew ?? 1;
       }
 
-      // Créer la TMK et l’enveloppe passphrase pour l’utilisateur courant (admin)
       await createInitialVaultWithPassphrase(pin);
     } catch (err: any) {
       setError(err?.message || "Erreur");
@@ -95,15 +98,18 @@ export default function UnlockVaultModal() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <form onSubmit={onSubmit} className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+      <form
+        onSubmit={onSubmit}
+        className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl"
+      >
         <h2 className="text-xl font-semibold mb-2">
           {showCreate ? "Créer le coffre du cabinet" : "Déverrouiller le coffre"}
         </h2>
 
-        {/* Alerte mémorisation */}
         <div className="mb-3 rounded-lg border border-yellow-300 bg-yellow-50 text-yellow-900 p-3 text-sm">
-          <strong>Important :</strong> choisissez un code <strong>à 6 chiffres</strong> et mémorisez-le.
-          Il n’est <em>pas</em> stocké côté serveur. Sans ce code, les données chiffrées ne peuvent pas être récupérées.
+          <strong>Important :</strong> choisissez un code <strong>à 6 chiffres</strong> et
+          mémorisez-le. Il n’est <em>pas</em> stocké côté serveur. Sans ce code, les données
+          chiffrées ne peuvent pas être récupérées.
         </div>
 
         {(showCreate || hasPassWrap) && (
@@ -130,7 +136,8 @@ export default function UnlockVaultModal() {
 
             {showCreate && !isAdmin && (
               <p className="text-xs text-gray-500 mt-2">
-                Seul un administrateur peut initialiser le coffre. Contactez votre administrateur.
+                Seul un administrateur peut initialiser le coffre. Contactez votre
+                administrateur.
               </p>
             )}
           </>
