@@ -42,7 +42,7 @@ function toU8(v: any): Uint8Array {
   if (v instanceof Uint8Array) return v;
 
   // { type: 'Buffer', data: [...] }
-  if (typeof v === "object" && v.type === "Buffer" && Array.isArray((v as any).data)) {
+  if (typeof v === "object" && (v as any).type === "Buffer" && Array.isArray((v as any).data)) {
     return new Uint8Array((v as any).data);
   }
 
@@ -56,7 +56,9 @@ function toU8(v: any): Uint8Array {
       const hex = v.slice(2);
       if (hex.length % 2 !== 0) return new Uint8Array();
       const out = new Uint8Array(hex.length / 2);
-      for (let i = 0; i < hex.length; i += 2) out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+      for (let i = 0; i < hex.length; i += 2) {
+        out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+      }
       return out;
     }
     // base64/base64url
@@ -91,6 +93,7 @@ function parseKdfParams(raw: any): { kdf: string; iters?: number } {
 
 /** Encodage base64 sûr pour envoi RPC */
 function bytesToB64(u8: Uint8Array): string {
+  // btoa sur string binaire
   let s = "";
   for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
   return btoa(s);
@@ -163,6 +166,7 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       }
       const tmkRaw = payload.slice(MAGIC.length, MAGIC.length + 32);
 
+      console.log("[Crypto] Unlocked: payloadLen=", payload.length, "tmkLen=", tmkRaw.length);
       setState({ tmk: tmkRaw, version: activeVersion, unlocking: false });
     } catch (err) {
       console.error("unlockWithPassphrase error:", err);
@@ -177,12 +181,14 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
+      console.log("[Crypto] Create: start");
       // 1) S'assurer qu'une version active existe (et la créer si besoin)
       let { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
       if (eActive) throw eActive;
       let activeVersion: number | null = vActive ?? null;
 
       if (!activeVersion) {
+        console.log("[Crypto] No active version -> rotate");
         const { data: vNew, error: eNew } = await supabase.rpc("rotate_tmk_version");
         if (eNew) throw eNew;
         activeVersion = (vNew ?? null) as number | null;
@@ -198,15 +204,15 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       if (!activeVersion) {
         throw new Error("Impossible d'initialiser la TMK (version active absente).");
       }
+      console.log("[Crypto] Active version =", activeVersion);
 
       // 2) Génère TMK + KEK (PIN)
       const tmk = randomBytes(32);
       const salt = randomBytes(16);
-
-      // Choix KDF pbkdf2 — on **sauvegarde les paramètres**
-      const iterations = 310_000; // passe à 600_000 si tu veux durcir
+      const iterations = 310_000; // durcissable à 600_000
       const { kek } = await kdfPBKDF2(pin6, salt, iterations);
       const kdfParams = { kdf: "pbkdf2", iters: iterations };
+      console.log("[Crypto] KDF ok (iters=", iterations, "), saltLen=", salt.length);
 
       // 3) Construire payload = MAGIC || TMK
       const payload = new Uint8Array(MAGIC.length + tmk.length);
@@ -216,9 +222,14 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       // 4) Envelopper (iv || ct) avec AAD
       const aad = new TextEncoder().encode(`${userBase.client_id}:${user.id}:${activeVersion}`);
       const { iv, ct } = await wrapWithKEK(kek, payload, aad);
+      if (!(iv instanceof Uint8Array) || !(ct instanceof Uint8Array)) {
+        throw new Error("wrapWithKEK a retourné des iv/ct invalides.");
+      }
       const wrap = new Uint8Array(iv.length + ct.length);
       wrap.set(iv, 0);
       wrap.set(ct, iv.length);
+
+      console.log("[Crypto] Wrapped: ivLen=", iv.length, "ctLen=", ct.length, "wrapLen=", wrap.length);
 
       // 5) RPC upsert en **base64** (fiable)
       const wrapB64 = bytesToB64(wrap);
@@ -237,9 +248,11 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
         console.error("upsert_my_tmk_wrap_b64 error:", error);
         throw error;
       }
+      console.log("[Crypto] RPC upsert_my_tmk_wrap_b64 ok");
 
       // 6) Pose en mémoire
       setState({ tmk, version: activeVersion, unlocking: false });
+      console.log("[Crypto] Created + unlocked, tmkLen=", tmk.length);
     } catch (err) {
       console.error("createInitialVaultWithPassphrase error:", err);
       setState((s) => ({ ...s, unlocking: false }));
