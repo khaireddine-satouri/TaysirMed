@@ -2,6 +2,10 @@
 import { useEffect, useRef, useState } from "react";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 
+// Crypto (zéro-knowledge)
+import { CryptoProvider, useCrypto } from "./contexts/CryptoContext";
+import UnlockVaultModal from "./components/UnlockVaultModal";
+
 // Pages Auth
 import Login from "./components/Login";
 import Signup from "./components/Signup";
@@ -26,7 +30,7 @@ import Planning from "./components/soignant/Planning";
 // Médecin
 import RendezVousList from "./components/medecin/RendezVousList";
 
-// Types
+// Types / API
 import { supabase, PatientCipher as Patient, DossierSoins as DossierSoin } from "./lib/supabase";
 
 type SoignantView =
@@ -49,8 +53,9 @@ function parseHash(): Record<string, string> {
   return out;
 }
 
-function AppContent() {
+function AppContentInner() {
   const { user, userBase, loading } = useAuth();
+  const { unlocked } = useCrypto(); // état de déverrouillage TMK (en mémoire)
   const [showSignup, setShowSignup] = useState(false);
 
   // navigation soignant
@@ -230,23 +235,35 @@ function AppContent() {
   };
 
   // ==== rendu final ====
-  if (userBase.type_client === "soignant") {
-    return (
+  const main =
+    userBase.type_client === "soignant" ? (
       <SoignantLayout currentView={currentView} onNavigate={handleNavigate}>
         {renderSoignantContent()}
       </SoignantLayout>
-    );
-  }
-
-  if (userBase.type_client === "medecin") {
-    return (
+    ) : userBase.type_client === "medecin" ? (
       <MedecinLayout currentView={currentView} onNavigate={setCurrentView}>
         {currentView === "rendezvous" && <RendezVousList />}
       </MedecinLayout>
+    ) : (
+      <div>Type de client inconnu</div>
     );
-  }
 
-  return <div>Type de client inconnu</div>;
+  return (
+    <>
+      {main}
+      {/* Modal de déverrouillage : affiché seulement si connecté et coffre non déverrouillé */}
+      {user && userBase && !unlocked && <UnlockVaultModal />}
+    </>
+  );
+}
+
+function AppContent() {
+  // CryptoProvider doit envelopper tout ce qui consomme useCrypto()
+  return (
+    <CryptoProvider>
+      <AppContentInner />
+    </CryptoProvider>
+  );
 }
 
 export default function App() {
