@@ -9,7 +9,7 @@ import {
 } from "react";
 import { supabase } from "../lib/supabase";
 import {
-  kdfPBKDF2,        // tu peux augmenter les itérations dans cryptoClient.ts si besoin
+  kdfPBKDF2,        // supporte un 3e param "iterations"
   wrapWithKEK,
   unwrapWithKEK,
   randomBytes,
@@ -41,24 +41,18 @@ function toU8(v: any): Uint8Array {
   if (!v) return new Uint8Array();
   if (v instanceof Uint8Array) return v;
 
-  // { type: 'Buffer', data: [...] }
   if (typeof v === "object" && v.type === "Buffer" && Array.isArray(v.data)) {
     return new Uint8Array(v.data);
   }
-
-  // number[]
   if (Array.isArray(v)) return new Uint8Array(v as number[]);
 
-  // string: hex ("\x...") ou base64/base64url
   if (typeof v === "string") {
-    // hex postgres
+    // hex postgres "\x..."
     if (v.startsWith("\\x")) {
       const hex = v.slice(2);
       if (hex.length % 2 !== 0) return new Uint8Array();
       const out = new Uint8Array(hex.length / 2);
-      for (let i = 0; i < hex.length; i += 2) {
-        out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
-      }
+      for (let i = 0; i < hex.length; i += 2) out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
       return out;
     }
     // base64/base64url
@@ -80,6 +74,17 @@ function toU8(v: any): Uint8Array {
   return new Uint8Array();
 }
 
+/** Récupère proprement kdf_params depuis la ligne RPC (objet ou JSON string) */
+function parseKdfParams(raw: any): { kdf: string; iters?: number } {
+  let obj: any = raw;
+  if (typeof raw === "string") {
+    try { obj = JSON.parse(raw); } catch { obj = {}; }
+  }
+  const kdf = (obj?.kdf || "pbkdf2").toLowerCase();
+  const iters = Number(obj?.iters ?? obj?.iterations ?? NaN);
+  return { kdf, iters: Number.isFinite(iters) ? iters : undefined };
+}
+
 export function CryptoProvider({ children }: { children: ReactNode }) {
   const { user, userBase } = useAuth();
   const [{ tmk, version, unlocking }, setState] = useState<{
@@ -99,13 +104,13 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
-      // Version active
+      // 1) Version active
       const { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
       if (eActive) throw eActive;
       const activeVersion: number | null = vActive ?? null;
       if (!activeVersion) throw new Error("Aucune TMK active. Demandez à un administrateur d'initialiser le coffre.");
 
-      // Enveloppes de l'utilisateur
+      // 2) Enveloppes de l'utilisateur
       const { data: wraps, error: eWraps } = await supabase.rpc("get_my_tmk_wraps");
       if (eWraps) throw eWraps;
 
@@ -114,15 +119,20 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       );
       if (!row) throw new Error("Aucune enveloppe TMK liée à votre code secret.");
 
+      // 3) KDF params EXACTS utilisés à la création
+      const { kdf, iters } = parseKdfParams(row.kdf_params);
       const salt = toU8(row.salt);
-      if (salt.length < 8) {
-        console.warn("Salt inhabituel (court):", salt.length);
-      }
-      const { kek } = await kdfPBKDF2(pin6, salt);
+      if (salt.length < 8) console.warn("Salt inhabituel (court):", salt.length);
 
+      if (kdf !== "pbkdf2") {
+        throw new Error(`KDF non supporté: ${kdf}. (Attendu: pbkdf2)`);
+      }
+      // ⚠️ Utiliser exactement le même nombre d'itérations qu'à la création
+      const { kek } = await kdfPBKDF2(pin6, salt, iters || 310_000);
+
+      // 4) Déchiffrage TMK
       const wrap = toU8(row.tmk_wrap);
       if (wrap.length < 28) {
-        // 12 IV + 16 tag + au moins quelques octets payload
         console.error("Wrap trop court:", { wrapLen: wrap.length, row });
         throw new Error("Données de clé invalides (wrap incomplet).");
       }
@@ -145,25 +155,29 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
-      // Version active requise
+      // 1) Version active requise
       const { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
       if (eActive) throw eActive;
       const activeVersion: number | null = vActive ?? null;
       if (!activeVersion) throw new Error("La TMK n'est pas initialisée. Un administrateur doit créer la version active.");
 
-      // Génère TMK + KEK
+      // 2) Génère TMK + KEK
       const tmk = randomBytes(32);
       const salt = randomBytes(16);
-      const { kek, params } = await kdfPBKDF2(pin6, salt);
 
-      // Enveloppe TMK
+      // Choix KDF (ici pbkdf2) — on **sauvegarde les paramètres** avec l'enveloppe
+      const iterations = 310_000; // ou 600_000 si tu as durci
+      const { kek } = await kdfPBKDF2(pin6, salt, iterations);
+      const kdfParams = { kdf: "pbkdf2", iters: iterations };
+
+      // 3) Enveloppe TMK
       const aad = new TextEncoder().encode(`${userBase.client_id}:${user.id}:${activeVersion}`);
       const { iv, ct } = await wrapWithKEK(kek, tmk, aad);
       const wrap = new Uint8Array(iv.length + ct.length);
       wrap.set(iv, 0);
       wrap.set(ct, iv.length);
 
-      // RPC: bytea -> number[]
+      // 4) RPC: bytea -> number[]
       const wrapArr = Array.from(wrap);
       const saltArr = Array.from(salt);
 
@@ -171,7 +185,7 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
         p_tmk_version: activeVersion,
         p_tmk_wrap: wrapArr as any,
         p_wrap_alg: "AES-GCM",
-        p_kdf_params: params,
+        p_kdf_params: kdfParams,   // << on pousse bien les params utilisés
         p_salt: saltArr as any,
         p_device_bound: false,
         p_device_id: null,
