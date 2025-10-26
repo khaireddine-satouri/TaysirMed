@@ -42,8 +42,8 @@ function toU8(v: any): Uint8Array {
   if (v instanceof Uint8Array) return v;
 
   // { type: 'Buffer', data: [...] }
-  if (typeof v === "object" && v.type === "Buffer" && Array.isArray(v.data)) {
-    return new Uint8Array(v.data);
+  if (typeof v === "object" && v.type === "Buffer" && Array.isArray((v as any).data)) {
+    return new Uint8Array((v as any).data);
   }
 
   // number[]
@@ -56,9 +56,7 @@ function toU8(v: any): Uint8Array {
       const hex = v.slice(2);
       if (hex.length % 2 !== 0) return new Uint8Array();
       const out = new Uint8Array(hex.length / 2);
-      for (let i = 0; i < hex.length; i += 2) {
-        out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
-      }
+      for (let i = 0; i < hex.length; i += 2) out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
       return out;
     }
     // base64/base64url
@@ -84,11 +82,7 @@ function toU8(v: any): Uint8Array {
 function parseKdfParams(raw: any): { kdf: string; iters?: number } {
   let obj: any = raw;
   if (typeof raw === "string") {
-    try {
-      obj = JSON.parse(raw);
-    } catch {
-      obj = {};
-    }
+    try { obj = JSON.parse(raw); } catch { obj = {}; }
   }
   const kdf = (obj?.kdf || "pbkdf2").toLowerCase();
   const iters = Number(obj?.iters ?? obj?.iterations ?? NaN);
@@ -97,11 +91,13 @@ function parseKdfParams(raw: any): { kdf: string; iters?: number } {
 
 /** Encodage base64 sûr pour envoi RPC */
 function bytesToB64(u8: Uint8Array): string {
-  // btoa sur string binaire
   let s = "";
   for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
   return btoa(s);
 }
+
+/** MAGIC header pour valider le plaintext déchiffré */
+const MAGIC = new TextEncoder().encode("VAULTv1"); // 7 octets; versionnable
 
 export function CryptoProvider({ children }: { children: ReactNode }) {
   const { user, userBase } = useAuth();
@@ -118,46 +114,36 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
   const unlockWithPassphrase = async (pin6: string) => {
     if (!user || !userBase) return;
-    if (!/^\d{6}$/.test(pin6))
-      throw new Error("Le code secret doit contenir exactement 6 chiffres.");
+    if (!/^\d{6}$/.test(pin6)) throw new Error("Le code secret doit contenir exactement 6 chiffres.");
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
       // 1) Version active
-      const { data: vActive, error: eActive } = await supabase.rpc(
-        "active_tmk_version"
-      );
+      const { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
       if (eActive) throw eActive;
       const activeVersion: number | null = vActive ?? null;
-      if (!activeVersion)
-        throw new Error(
-          "Aucune TMK active. Demandez à un administrateur d'initialiser le coffre."
-        );
+      if (!activeVersion) throw new Error("Aucune TMK active. Demandez à un administrateur d'initialiser le coffre.");
 
       // 2) Enveloppes de l'utilisateur
-      const { data: wraps, error: eWraps } = await supabase.rpc(
-        "get_my_tmk_wraps"
-      );
+      const { data: wraps, error: eWraps } = await supabase.rpc("get_my_tmk_wraps");
       if (eWraps) throw eWraps;
 
       const row = (wraps as any[] | null)?.find(
         (r) => r.tmk_version === activeVersion && r.device_bound === false
       );
-      if (!row)
-        throw new Error("Aucune enveloppe TMK liée à votre code secret.");
+      if (!row) throw new Error("Aucune enveloppe TMK liée à votre code secret.");
 
       // 3) KDF params EXACTS utilisés à la création
       const { kdf, iters } = parseKdfParams(row.kdf_params);
       const salt = toU8(row.salt);
-      if (salt.length < 8)
-        console.warn("Salt inhabituel (court):", salt.length);
+      if (salt.length < 8) console.warn("Salt inhabituel (court):", salt.length);
 
       if (kdf !== "pbkdf2") {
         throw new Error(`KDF non supporté: ${kdf}. (Attendu: pbkdf2)`);
       }
       const { kek } = await kdfPBKDF2(pin6, salt, iters || 310_000);
 
-      // 4) Déchiffrage TMK
+      // 4) Déchiffrage payload et validation MAGIC
       const wrap = toU8(row.tmk_wrap);
       if (wrap.length < 28) {
         console.error("Wrap trop court:", { wrapLen: wrap.length, row });
@@ -165,11 +151,18 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       }
       const iv = wrap.slice(0, 12);
       const ct = wrap.slice(12);
-      const aad = new TextEncoder().encode(
-        `${userBase.client_id}:${user.id}:${activeVersion}`
-      );
+      const aad = new TextEncoder().encode(`${userBase.client_id}:${user.id}:${activeVersion}`);
 
-      const tmkRaw = await unwrapWithKEK(kek, iv, ct, aad);
+      const payload = await unwrapWithKEK(kek, iv, ct, aad); // <- devrait rendre MAGIC||TMK
+      if (payload.length < MAGIC.length + 32) {
+        throw new Error("Code secret incorrect (payload trop court).");
+      }
+      // Vérif MAGIC
+      for (let i = 0; i < MAGIC.length; i++) {
+        if (payload[i] !== MAGIC[i]) throw new Error("Code secret incorrect.");
+      }
+      const tmkRaw = payload.slice(MAGIC.length, MAGIC.length + 32);
+
       setState({ tmk: tmkRaw, version: activeVersion, unlocking: false });
     } catch (err) {
       console.error("unlockWithPassphrase error:", err);
@@ -180,39 +173,30 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
   const createInitialVaultWithPassphrase = async (pin6: string) => {
     if (!user || !userBase) return;
-    if (!/^\d{6}$/.test(pin6))
-      throw new Error("Le code secret doit contenir exactement 6 chiffres.");
+    if (!/^\d{6}$/.test(pin6)) throw new Error("Le code secret doit contenir exactement 6 chiffres.");
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
       // 1) S'assurer qu'une version active existe (et la créer si besoin)
-      let { data: vActive, error: eActive } = await supabase.rpc(
-        "active_tmk_version"
-      );
+      let { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
       if (eActive) throw eActive;
       let activeVersion: number | null = vActive ?? null;
 
       if (!activeVersion) {
-        const { data: vNew, error: eNew } = await supabase.rpc(
-          "rotate_tmk_version"
-        );
+        const { data: vNew, error: eNew } = await supabase.rpc("rotate_tmk_version");
         if (eNew) throw eNew;
         activeVersion = (vNew ?? null) as number | null;
 
         // relire par sécurité
         if (!activeVersion) {
-          const { data: vAgain, error: eAgain } = await supabase.rpc(
-            "active_tmk_version"
-          );
+          const { data: vAgain, error: eAgain } = await supabase.rpc("active_tmk_version");
           if (eAgain) throw eAgain;
           activeVersion = vAgain ?? null;
         }
       }
 
       if (!activeVersion) {
-        throw new Error(
-          "Impossible d'initialiser la TMK (version active absente)."
-        );
+        throw new Error("Impossible d'initialiser la TMK (version active absente).");
       }
 
       // 2) Génère TMK + KEK (PIN)
@@ -224,16 +208,19 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       const { kek } = await kdfPBKDF2(pin6, salt, iterations);
       const kdfParams = { kdf: "pbkdf2", iters: iterations };
 
-      // 3) Enveloppe TMK (iv || ct)
-      const aad = new TextEncoder().encode(
-        `${userBase.client_id}:${user.id}:${activeVersion}`
-      );
-      const { iv, ct } = await wrapWithKEK(kek, tmk, aad);
+      // 3) Construire payload = MAGIC || TMK
+      const payload = new Uint8Array(MAGIC.length + tmk.length);
+      payload.set(MAGIC, 0);
+      payload.set(tmk, MAGIC.length);
+
+      // 4) Envelopper (iv || ct) avec AAD
+      const aad = new TextEncoder().encode(`${userBase.client_id}:${user.id}:${activeVersion}`);
+      const { iv, ct } = await wrapWithKEK(kek, payload, aad);
       const wrap = new Uint8Array(iv.length + ct.length);
       wrap.set(iv, 0);
       wrap.set(ct, iv.length);
 
-      // 4) RPC upsert en **base64** (fiable)
+      // 5) RPC upsert en **base64** (fiable)
       const wrapB64 = bytesToB64(wrap);
       const saltB64 = bytesToB64(salt);
 
@@ -251,6 +238,7 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
         throw error;
       }
 
+      // 6) Pose en mémoire
       setState({ tmk, version: activeVersion, unlocking: false });
     } catch (err) {
       console.error("createInitialVaultWithPassphrase error:", err);
