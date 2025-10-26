@@ -13,14 +13,16 @@ export default function UnlockVaultModal() {
     createInitialVaultWithPassphrase,
   } = useCrypto();
 
+  // Diagnostics (non bloquants)
   const [hasPassWrap, setHasPassWrap] = useState<boolean | null>(null);
   const [activeVersion, setActiveVersion] = useState<number | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [pin, setPin] = useState("");
 
   const isAdmin = userBase?.type_utilisateur === "admin";
 
-  // Diagnostic compact pour affichage
+  // Diagnostic compact pour affichage dev
   const diag = useMemo(() => {
     const parts: string[] = [];
     parts.push(`v=${activeVersion ?? "∅"}`);
@@ -32,7 +34,7 @@ export default function UnlockVaultModal() {
     (async () => {
       if (!user || !userBase) return;
       setError(null);
-      setHasPassWrap(null); // état "chargement"
+      setHasPassWrap(null);
       setActiveVersion(null);
 
       // 1) Version TMK active ?
@@ -47,7 +49,6 @@ export default function UnlockVaultModal() {
       setActiveVersion(vActive);
 
       if (!vActive) {
-        // pas de TMK => création (admin)
         setHasPassWrap(false);
         return;
       }
@@ -67,54 +68,58 @@ export default function UnlockVaultModal() {
     })();
   }, [user?.id, userBase?.client_id]);
 
+  // Modal caché si déjà déverrouillé ou non connecté
   if (unlocked || !user || !userBase) return null;
 
   const onSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setError(null);
+    e.preventDefault();
+    setError(null);
 
-  if (!/^\d{6}$/.test(pin)) {
-    setError("Le code secret doit contenir exactement 6 chiffres.");
-    return;
-  }
-
-  try {
-    // 1) tenter l’unlock en premier
-    await unlockWithPassphrase(pin);
-    console.log("Unlocked OK");
-    return; // le modal se fermera automatiquement car `unlocked` passe à true
-  } catch (err: any) {
-    const msg = String(err?.message || err);
-
-    // 2) fallback création si admin et si l’erreur indique pas d’enveloppe/pas de version
-    const canCreate = isAdmin && (
-      msg.includes("Aucune TMK active") ||
-      msg.includes("Aucune enveloppe TMK") ||
-      msg.toLowerCase().includes("no_auth_context") ||
-      msg.toLowerCase().includes("not found") ||
-      msg.toLowerCase().includes("no rows")
-    );
-
-    if (canCreate) {
-      try {
-        await createInitialVaultWithPassphrase(pin);
-        console.log("Vault created + unlocked");
-        return;
-      } catch (e2: any) {
-        console.error("createInitialVaultWithPassphrase failed:", e2);
-        setError(e2?.message || "Erreur lors de la création du coffre.");
-        return;
-      }
+    // Validation stricte PIN
+    if (!/^\d{6}$/.test(pin)) {
+      setError("Le code secret doit contenir exactement 6 chiffres.");
+      return;
     }
 
-    console.error("unlockWithPassphrase failed:", err);
-    setError(msg || "Erreur");
-  }
-};
+    try {
+      // 1) Toujours tenter l’unlock en premier
+      await unlockWithPassphrase(pin);
+      console.log("Unlocked OK");
+      return; // le modal se fermera (unlocked => true)
+    } catch (err: any) {
+      const msg = String(err?.message || err);
 
+      // 2) fallback création si admin et si l’erreur indique pas d’enveloppe/pas de version
+      const canCreate =
+        isAdmin &&
+        (
+          msg.includes("Aucune TMK active") ||
+          msg.includes("Aucune enveloppe TMK") ||
+          msg.toLowerCase().includes("no_auth_context") ||
+          msg.toLowerCase().includes("not found") ||
+          msg.toLowerCase().includes("no rows") ||
+          msg.toLowerCase().includes("wrap incomplet")
+        );
 
-  const showCreate = hasPassWrap === false;
-  const isLoadingState = hasPassWrap === null || unlocking;
+      if (canCreate) {
+        try {
+          await createInitialVaultWithPassphrase(pin);
+          console.log("Vault created + unlocked");
+          return;
+        } catch (e2: any) {
+          console.error("createInitialVaultWithPassphrase failed:", e2);
+          setError(e2?.message || "Erreur lors de la création du coffre.");
+          return;
+        }
+      }
+
+      console.error("unlockWithPassphrase failed:", err);
+      setError(msg || "Erreur");
+    }
+  };
+
+  // Désactive uniquement pendant l’opération
+  const isLoading = unlocking;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -123,7 +128,7 @@ export default function UnlockVaultModal() {
         className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl"
       >
         <h2 className="text-xl font-semibold mb-2">
-          {showCreate ? "Créer le coffre du cabinet" : "Déverrouiller le coffre"}
+          {hasPassWrap ? "Déverrouiller le coffre" : "Créer le coffre du cabinet"}
         </h2>
 
         <div className="mb-3 rounded-lg border border-yellow-300 bg-yellow-50 text-yellow-900 p-3 text-sm">
@@ -145,27 +150,22 @@ export default function UnlockVaultModal() {
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
           required
-          disabled={isLoadingState}
+          disabled={isLoading}
         />
 
         {error && <div className="text-red-600 text-sm mb-2">{error}</div>}
 
         <button
           type="submit"
-          disabled={isLoadingState || pin.length !== 6}
+          disabled={isLoading || pin.length !== 6}
           className="w-full rounded-lg bg-teal-600 text-white py-2 disabled:opacity-60"
         >
-          {isLoadingState ? "..." : showCreate ? "Créer et ouvrir" : "Déverrouiller"}
+          {isLoading ? "..." : hasPassWrap ? "Déverrouiller" : "Créer et ouvrir"}
         </button>
 
-        {hasPassWrap === null && (
-          <p className="text-xs text-gray-500 mt-2">Vérification du coffre…</p>
-        )}
-
-        {showCreate && !isAdmin && (
+        {!hasPassWrap && !isAdmin && (
           <p className="text-xs text-gray-500 mt-2">
-            Seul un administrateur peut initialiser le coffre. Contactez votre
-            administrateur.
+            Seul un administrateur peut initialiser le coffre. Contactez votre administrateur.
           </p>
         )}
       </form>
