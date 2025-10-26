@@ -9,7 +9,7 @@ import {
 } from "react";
 import { supabase } from "../lib/supabase";
 import {
-  kdfPBKDF2,        // supporte un 3e param "iterations"
+  kdfPBKDF2,        // assure-toi que cette fonction prend (pass, salt, iterations?)
   wrapWithKEK,
   unwrapWithKEK,
   randomBytes,
@@ -41,18 +41,24 @@ function toU8(v: any): Uint8Array {
   if (!v) return new Uint8Array();
   if (v instanceof Uint8Array) return v;
 
+  // { type: 'Buffer', data: [...] }
   if (typeof v === "object" && v.type === "Buffer" && Array.isArray(v.data)) {
     return new Uint8Array(v.data);
   }
+
+  // number[]
   if (Array.isArray(v)) return new Uint8Array(v as number[]);
 
+  // string: hex ("\x...") ou base64/base64url
   if (typeof v === "string") {
-    // hex postgres "\x..."
+    // hex postgres
     if (v.startsWith("\\x")) {
       const hex = v.slice(2);
       if (hex.length % 2 !== 0) return new Uint8Array();
       const out = new Uint8Array(hex.length / 2);
-      for (let i = 0; i < hex.length; i += 2) out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+      for (let i = 0; i < hex.length; i += 2) {
+        out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+      }
       return out;
     }
     // base64/base64url
@@ -127,7 +133,6 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       if (kdf !== "pbkdf2") {
         throw new Error(`KDF non supporté: ${kdf}. (Attendu: pbkdf2)`);
       }
-      // ⚠️ Utiliser exactement le même nombre d'itérations qu'à la création
       const { kek } = await kdfPBKDF2(pin6, salt, iters || 310_000);
 
       // 4) Déchiffrage TMK
@@ -155,18 +160,34 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
-      // 1) Version active requise
-      const { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
+      // 1) S'assurer qu'une version active existe (et la créer si besoin)
+      let { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
       if (eActive) throw eActive;
-      const activeVersion: number | null = vActive ?? null;
-      if (!activeVersion) throw new Error("La TMK n'est pas initialisée. Un administrateur doit créer la version active.");
+      let activeVersion: number | null = vActive ?? null;
 
-      // 2) Génère TMK + KEK
+      if (!activeVersion) {
+        const { data: vNew, error: eNew } = await supabase.rpc("rotate_tmk_version");
+        if (eNew) throw eNew;
+        activeVersion = (vNew ?? null) as number | null;
+
+        // relire par sécurité
+        if (!activeVersion) {
+          const { data: vAgain, error: eAgain } = await supabase.rpc("active_tmk_version");
+          if (eAgain) throw eAgain;
+          activeVersion = vAgain ?? null;
+        }
+      }
+
+      if (!activeVersion) {
+        throw new Error("Impossible d'initialiser la TMK (version active absente).");
+      }
+
+      // 2) Génère TMK + KEK (PIN)
       const tmk = randomBytes(32);
       const salt = randomBytes(16);
 
-      // Choix KDF (ici pbkdf2) — on **sauvegarde les paramètres** avec l'enveloppe
-      const iterations = 310_000; // ou 600_000 si tu as durci
+      // Choix KDF pbkdf2 — on **sauvegarde les paramètres**
+      const iterations = 310_000; // monte à 600_000 si tu veux durcir
       const { kek } = await kdfPBKDF2(pin6, salt, iterations);
       const kdfParams = { kdf: "pbkdf2", iters: iterations };
 
@@ -185,7 +206,7 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
         p_tmk_version: activeVersion,
         p_tmk_wrap: wrapArr as any,
         p_wrap_alg: "AES-GCM",
-        p_kdf_params: kdfParams,   // << on pousse bien les params utilisés
+        p_kdf_params: kdfParams,
         p_salt: saltArr as any,
         p_device_bound: false,
         p_device_id: null,
