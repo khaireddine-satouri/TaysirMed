@@ -9,7 +9,7 @@ import {
 } from "react";
 import { supabase } from "../lib/supabase";
 import {
-  kdfPBKDF2,        // assure-toi que cette fonction prend (pass, salt, iterations?)
+  kdfPBKDF2,       // (pass, salt, iterations?)
   wrapWithKEK,
   unwrapWithKEK,
   randomBytes,
@@ -84,11 +84,23 @@ function toU8(v: any): Uint8Array {
 function parseKdfParams(raw: any): { kdf: string; iters?: number } {
   let obj: any = raw;
   if (typeof raw === "string") {
-    try { obj = JSON.parse(raw); } catch { obj = {}; }
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      obj = {};
+    }
   }
   const kdf = (obj?.kdf || "pbkdf2").toLowerCase();
   const iters = Number(obj?.iters ?? obj?.iterations ?? NaN);
   return { kdf, iters: Number.isFinite(iters) ? iters : undefined };
+}
+
+/** Encodage base64 sûr pour envoi RPC */
+function bytesToB64(u8: Uint8Array): string {
+  // btoa sur string binaire
+  let s = "";
+  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+  return btoa(s);
 }
 
 export function CryptoProvider({ children }: { children: ReactNode }) {
@@ -106,29 +118,39 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
   const unlockWithPassphrase = async (pin6: string) => {
     if (!user || !userBase) return;
-    if (!/^\d{6}$/.test(pin6)) throw new Error("Le code secret doit contenir exactement 6 chiffres.");
+    if (!/^\d{6}$/.test(pin6))
+      throw new Error("Le code secret doit contenir exactement 6 chiffres.");
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
       // 1) Version active
-      const { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
+      const { data: vActive, error: eActive } = await supabase.rpc(
+        "active_tmk_version"
+      );
       if (eActive) throw eActive;
       const activeVersion: number | null = vActive ?? null;
-      if (!activeVersion) throw new Error("Aucune TMK active. Demandez à un administrateur d'initialiser le coffre.");
+      if (!activeVersion)
+        throw new Error(
+          "Aucune TMK active. Demandez à un administrateur d'initialiser le coffre."
+        );
 
       // 2) Enveloppes de l'utilisateur
-      const { data: wraps, error: eWraps } = await supabase.rpc("get_my_tmk_wraps");
+      const { data: wraps, error: eWraps } = await supabase.rpc(
+        "get_my_tmk_wraps"
+      );
       if (eWraps) throw eWraps;
 
       const row = (wraps as any[] | null)?.find(
         (r) => r.tmk_version === activeVersion && r.device_bound === false
       );
-      if (!row) throw new Error("Aucune enveloppe TMK liée à votre code secret.");
+      if (!row)
+        throw new Error("Aucune enveloppe TMK liée à votre code secret.");
 
       // 3) KDF params EXACTS utilisés à la création
       const { kdf, iters } = parseKdfParams(row.kdf_params);
       const salt = toU8(row.salt);
-      if (salt.length < 8) console.warn("Salt inhabituel (court):", salt.length);
+      if (salt.length < 8)
+        console.warn("Salt inhabituel (court):", salt.length);
 
       if (kdf !== "pbkdf2") {
         throw new Error(`KDF non supporté: ${kdf}. (Attendu: pbkdf2)`);
@@ -143,7 +165,9 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       }
       const iv = wrap.slice(0, 12);
       const ct = wrap.slice(12);
-      const aad = new TextEncoder().encode(`${userBase.client_id}:${user.id}:${activeVersion}`);
+      const aad = new TextEncoder().encode(
+        `${userBase.client_id}:${user.id}:${activeVersion}`
+      );
 
       const tmkRaw = await unwrapWithKEK(kek, iv, ct, aad);
       setState({ tmk: tmkRaw, version: activeVersion, unlocking: false });
@@ -156,30 +180,39 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
   const createInitialVaultWithPassphrase = async (pin6: string) => {
     if (!user || !userBase) return;
-    if (!/^\d{6}$/.test(pin6)) throw new Error("Le code secret doit contenir exactement 6 chiffres.");
+    if (!/^\d{6}$/.test(pin6))
+      throw new Error("Le code secret doit contenir exactement 6 chiffres.");
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
       // 1) S'assurer qu'une version active existe (et la créer si besoin)
-      let { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
+      let { data: vActive, error: eActive } = await supabase.rpc(
+        "active_tmk_version"
+      );
       if (eActive) throw eActive;
       let activeVersion: number | null = vActive ?? null;
 
       if (!activeVersion) {
-        const { data: vNew, error: eNew } = await supabase.rpc("rotate_tmk_version");
+        const { data: vNew, error: eNew } = await supabase.rpc(
+          "rotate_tmk_version"
+        );
         if (eNew) throw eNew;
         activeVersion = (vNew ?? null) as number | null;
 
         // relire par sécurité
         if (!activeVersion) {
-          const { data: vAgain, error: eAgain } = await supabase.rpc("active_tmk_version");
+          const { data: vAgain, error: eAgain } = await supabase.rpc(
+            "active_tmk_version"
+          );
           if (eAgain) throw eAgain;
           activeVersion = vAgain ?? null;
         }
       }
 
       if (!activeVersion) {
-        throw new Error("Impossible d'initialiser la TMK (version active absente).");
+        throw new Error(
+          "Impossible d'initialiser la TMK (version active absente)."
+        );
       }
 
       // 2) Génère TMK + KEK (PIN)
@@ -187,32 +220,34 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       const salt = randomBytes(16);
 
       // Choix KDF pbkdf2 — on **sauvegarde les paramètres**
-      const iterations = 310_000; // monte à 600_000 si tu veux durcir
+      const iterations = 310_000; // passe à 600_000 si tu veux durcir
       const { kek } = await kdfPBKDF2(pin6, salt, iterations);
       const kdfParams = { kdf: "pbkdf2", iters: iterations };
 
-      // 3) Enveloppe TMK
-      const aad = new TextEncoder().encode(`${userBase.client_id}:${user.id}:${activeVersion}`);
+      // 3) Enveloppe TMK (iv || ct)
+      const aad = new TextEncoder().encode(
+        `${userBase.client_id}:${user.id}:${activeVersion}`
+      );
       const { iv, ct } = await wrapWithKEK(kek, tmk, aad);
       const wrap = new Uint8Array(iv.length + ct.length);
       wrap.set(iv, 0);
       wrap.set(ct, iv.length);
 
-      // 4) RPC: bytea -> number[]
-      const wrapArr = Array.from(wrap);
-      const saltArr = Array.from(salt);
+      // 4) RPC upsert en **base64** (fiable)
+      const wrapB64 = bytesToB64(wrap);
+      const saltB64 = bytesToB64(salt);
 
-      const { error } = await supabase.rpc("upsert_my_tmk_wrap", {
+      const { error } = await supabase.rpc("upsert_my_tmk_wrap_b64", {
         p_tmk_version: activeVersion,
-        p_tmk_wrap: wrapArr as any,
+        p_tmk_wrap_b64: wrapB64,
         p_wrap_alg: "AES-GCM",
-        p_kdf_params: kdfParams,
-        p_salt: saltArr as any,
+        p_kdf_params: kdfParams, // { kdf:"pbkdf2", iters }
+        p_salt_b64: saltB64,
         p_device_bound: false,
         p_device_id: null,
       });
       if (error) {
-        console.error("upsert_my_tmk_wrap error:", error);
+        console.error("upsert_my_tmk_wrap_b64 error:", error);
         throw error;
       }
 
