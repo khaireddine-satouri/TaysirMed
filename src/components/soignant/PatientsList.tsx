@@ -1,14 +1,13 @@
 // src/components/soignant/PatientsList.tsx
 import { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
-import { Search, Plus, Phone, X, Trash2, User } from "lucide-react";
+import { Search, Plus, Phone, X, Trash2, User, Lock } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useKeys } from "../../contexts/KeyManager";
 import { anyToU8, aesGcmEncrypt, unpackIvCt, packIvCt } from "../../utils/zkcrypto";
 
 /** ===================== Types ===================== **/
 
-// Ligne brute DB (champs chiffrés)
 type PatientRow = {
   id: string;
   client_id: string;
@@ -20,7 +19,6 @@ type PatientRow = {
   telephone2_ct: any; // bytea | null
 };
 
-// Vue déchiffrée pour l'UI (pas de photos en V2)
 export type PatientView = {
   id: string;
   client_id: string;
@@ -31,12 +29,8 @@ export type PatientView = {
   telephone_2: string | null;
 };
 
-// On conserve la signature attendue par le parent, mais
-// ici "PatientWithUrl" == vue claire (plus de signedUrl).
-interface PatientWithUrl extends PatientView {}
-
 interface PatientsListProps {
-  onSelectPatient: (patient: PatientWithUrl) => void;
+  onSelectPatient: (patient: PatientView) => void;
 }
 
 /** ===================== Composant principal ===================== **/
@@ -44,7 +38,7 @@ interface PatientsListProps {
 export default function PatientsList({ onSelectPatient }: PatientsListProps) {
   const { user, userBase } = useAuth();
   const isAdmin = userBase?.type_utilisateur === "admin";
-  const { dek, zkReady } = useKeys();
+  const { dek, zkReady, deriveAndLoad } = useKeys();
 
   const [patients, setPatients] = useState<PatientView[]>([]);
   const [filteredPatients, setFilteredPatients] = useState<PatientView[]>([]);
@@ -57,9 +51,15 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string>("");
 
+  // Déverrouillage
+  const [unlockPwd, setUnlockPwd] = useState("");
+  const [unlockErr, setUnlockErr] = useState("");
+
   useEffect(() => {
-    // On attend que la DEK soit prête (zkReady) avant de charger/déchiffrer
-    if (!zkReady) return;
+    if (!zkReady) {
+      setLoading(false); // important: on arrête le spinner et on montre le panneau de déverrouillage
+      return;
+    }
     loadPatients();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zkReady]);
@@ -109,7 +109,6 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
     try {
       setLoading(true);
 
-      // Récupère champs chiffrés
       const { data, error } = await supabase
         .from("patients")
         .select(
@@ -123,8 +122,13 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
       const views: PatientView[] = [];
 
       for (const row of rows) {
-        const view = await decryptPatientRow(row, dek!);
-        views.push(view);
+        try {
+          const view = await decryptPatientRow(row, dek!);
+          views.push(view);
+        } catch (e) {
+          // Données legacy (non chiffrées) ou corrompues -> on les masque/ignore proprement
+          console.warn("Ligne patient non déchiffrable, ignorée:", row.id, e);
+        }
       }
 
       setPatients(views);
@@ -136,9 +140,22 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
     }
   };
 
+  const handleUnlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUnlockErr("");
+    try {
+      if (!user?.id) throw new Error("Session invalide.");
+      await deriveAndLoad(unlockPwd, user.id);
+      setUnlockPwd("");
+      // `zkReady` passera à true -> useEffect relancera loadPatients
+    } catch (err: any) {
+      console.error(err);
+      setUnlockErr("Mot de passe incorrect ou matériel de clé manquant.");
+    }
+  };
+
   const handleAddPatient = () => setShowAddModal(true);
 
-  // Suppression via Edge Function existante (pas besoin de la DEK)
   const handleDeletePatient = async () => {
     if (!patientToDelete) return;
     setDeleting(true);
@@ -175,7 +192,51 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
     }
   };
 
-  if (loading || !zkReady) {
+  // --- ÉTATS D’INTERFACE ---
+
+  // 1) Pas déverrouillé -> panneau Unlock
+  if (!zkReady) {
+    return (
+      <div className="max-w-lg mx-auto mt-10 bg-white rounded-xl shadow p-6">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-teal-50 text-teal-700">
+            <Lock className="w-6 h-6" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Déverrouiller les données patients</h2>
+            <p className="text-sm text-gray-600">
+              Entrez votre mot de passe pour déchiffrer vos données locales.
+            </p>
+          </div>
+        </div>
+
+        <form onSubmit={handleUnlock} className="mt-4 space-y-3">
+          <input
+            type="password"
+            value={unlockPwd}
+            onChange={(e) => setUnlockPwd(e.target.value)}
+            placeholder="Mot de passe"
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            required
+          />
+          {unlockErr && (
+            <div className="text-sm bg-red-50 text-red-700 border border-red-200 rounded-lg px-3 py-2">
+              {unlockErr}
+            </div>
+          )}
+          <button
+            type="submit"
+            className="w-full px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition"
+          >
+            Déverrouiller
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  // 2) Déverrouillé mais en cours de chargement
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600"></div>
@@ -183,6 +244,7 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
     );
   }
 
+  // 3) Déverrouillé + chargement terminé -> UI normale
   return (
     <div className="space-y-4">
       {/* Barre de recherche + bouton ajouter */}
@@ -295,48 +357,31 @@ export default function PatientsList({ onSelectPatient }: PatientsListProps) {
 /** ===================== Déchiffrement ===================== **/
 
 async function decryptPatientRow(row: PatientRow, dek: CryptoKey): Promise<PatientView> {
-  // AAD distincte par colonne pour lier le contexte
   const enc = new TextEncoder();
-
-  const aadBase = `client:${row.client_id}|table:patients|id:${row.id}|v:1|col:`;
+  const td = new TextDecoder();
+  const base = `client:${row.client_id}|table:patients|id:${row.id}|v:1|col:`;
 
   const nomBuf = anyToU8(row.nom_ct);
   const { iv: ivNom, ct: ctNom } = unpackIvCt(nomBuf);
-  const nomPlain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: ivNom, additionalData: enc.encode(aadBase + "nom") },
-    dek,
-    ctNom
-  );
-  const nom = new TextDecoder().decode(nomPlain);
+  const nomPlain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivNom, additionalData: enc.encode(base + "nom") }, dek, ctNom);
+  const nom = td.decode(nomPlain);
 
-  const prenomBuf = anyToU8(row.prenom_ct);
-  const { iv: ivPre, ct: ctPre } = unpackIvCt(prenomBuf);
-  const prenomPlain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: ivPre, additionalData: enc.encode(aadBase + "prenom") },
-    dek,
-    ctPre
-  );
-  const prenom = new TextDecoder().decode(prenomPlain);
+  const preBuf = anyToU8(row.prenom_ct);
+  const { iv: ivPre, ct: ctPre } = unpackIvCt(preBuf);
+  const prePlain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivPre, additionalData: enc.encode(base + "prenom") }, dek, ctPre);
+  const prenom = td.decode(prePlain);
 
   const telBuf = anyToU8(row.telephone_ct);
   const { iv: ivTel, ct: ctTel } = unpackIvCt(telBuf);
-  const telPlain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: ivTel, additionalData: enc.encode(aadBase + "telephone") },
-    dek,
-    ctTel
-  );
-  const telephone = new TextDecoder().decode(telPlain);
+  const telPlain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivTel, additionalData: enc.encode(base + "telephone") }, dek, ctTel);
+  const telephone = td.decode(telPlain);
 
   let telephone_2: string | null = null;
   if (row.telephone2_ct) {
     const tel2Buf = anyToU8(row.telephone2_ct);
     const { iv: ivTel2, ct: ctTel2 } = unpackIvCt(tel2Buf);
-    const tel2Plain = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: ivTel2, additionalData: enc.encode(aadBase + "telephone2") },
-      dek,
-      ctTel2
-    );
-    telephone_2 = new TextDecoder().decode(tel2Plain);
+    const tel2Plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivTel2, additionalData: enc.encode(base + "telephone2") }, dek, ctTel2);
+    telephone_2 = td.decode(tel2Plain);
   }
 
   return {
@@ -377,27 +422,19 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
       if (!dek) throw new Error("CLÉ NON DISPONIBLE (DEK)");
 
       const enc = new TextEncoder();
-      const aadBasePrefix = `client:${clientId}|table:patients|id:`;
-
-      // On génère d'abord un id pour lier l'AAD (utilise UUID local)
       const newId = crypto.randomUUID();
+      const aad = (col: string) => enc.encode(`client:${clientId}|table:patients|id:${newId}|v:1|col:${col}`);
 
-      // Chiffrement des champs (iv aléatoire + AAD par colonne)
-      const nomEnc = await aesGcmEncrypt(dek, enc.encode(nom.trim()), enc.encode(`${aadBasePrefix}${newId}|v:1|col:nom`));
-      const prenomEnc = await aesGcmEncrypt(dek, enc.encode(prenom.trim()), enc.encode(`${aadBasePrefix}${newId}|v:1|col:prenom`));
-      const telEnc = await aesGcmEncrypt(dek, enc.encode(telephone.trim()), enc.encode(`${aadBasePrefix}${newId}|v:1|col:telephone`));
-      const tel2Enc =
-        telephone2.trim()
-          ? await aesGcmEncrypt(dek, enc.encode(telephone2.trim()), enc.encode(`${aadBasePrefix}${newId}|v:1|col:telephone2`))
-          : null;
+      const nomEnc = await aesGcmEncrypt(dek, enc.encode(nom.trim()), aad("nom"));
+      const prenomEnc = await aesGcmEncrypt(dek, enc.encode(prenom.trim()), aad("prenom"));
+      const telEnc = await aesGcmEncrypt(dek, enc.encode(telephone.trim()), aad("telephone"));
+      const tel2Enc = telephone2.trim() ? await aesGcmEncrypt(dek, enc.encode(telephone2.trim()), aad("telephone2")) : null;
 
-      // On pack iv||ct pour stocker en bytea
       const nom_ct = packIvCt(nomEnc.iv, nomEnc.cipher);
       const prenom_ct = packIvCt(prenomEnc.iv, prenomEnc.cipher);
       const telephone_ct = packIvCt(telEnc.iv, telEnc.cipher);
       const telephone2_ct = tel2Enc ? packIvCt(tel2Enc.iv, tel2Enc.cipher) : null;
 
-      // Insert avec id imposé (afin que l'AAD inclue le bon id)
       const { error: insertError } = await supabase.from("patients").insert([
         {
           id: newId,
@@ -491,7 +528,7 @@ function AddPatientModal({ onClose, onSuccess, userId, clientId }: AddPatientMod
             </button>
             <button
               type="submit"
-              disabled={loading || !dek}
+              disabled={!dek || loading}
               className="flex-1 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition disabled:opacity-50"
             >
               {loading ? "Création..." : "Créer"}
