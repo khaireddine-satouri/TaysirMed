@@ -9,7 +9,7 @@ import {
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase, type UserBase } from "../lib/supabase";
-import { useKeys } from "./KeyManager";
+import { useKeys } from "./KeyManager.tsx";
 
 type AuthContextType = {
   session: Session | null;
