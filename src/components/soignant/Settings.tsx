@@ -225,7 +225,7 @@ export default function Settings() {
         setInviteMessage(
           <>
             ❌ Erreur lors de l’envoi de l’invitation. Vérifiez si la personne concernée a déjà
-            reçu une invitation et si besoin contactez le{" "}
+            reçu une invitation et si besoin contactez le support technique à l'adresse {" "}
             <a href="mailto:support@taysirmed.tn" className="text-teal-600 underline">
               support@taysirmed.tn
             </a>
