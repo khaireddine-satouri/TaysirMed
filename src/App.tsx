@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 
 // Pages Auth
@@ -26,20 +26,8 @@ import Planning from "./components/soignant/Planning";
 // Médecin
 import RendezVousList from "./components/medecin/RendezVousList";
 
-// Types + supabase
+// Types
 import { supabase, PatientCipher as Patient, DossierSoins as DossierSoin } from "./lib/supabase";
-
-/**
- * 🔐 Service de clés côté client
- * Assumptions:
- * - KeyService.bootstrapDEK() : tente de récupérer un share pour device courant et déverrouiller la DEK.
- *   -> return { ok: true } si prêt
- *   -> throw { code: 'MISSING_SHARE', deviceId } si pas de share pour cet appareil
- *   -> throw Error(...) pour toute autre erreur
- * - KeyService.getPairingPayload() : retourne { user_id, device_id, nonce } pour affichage/copie
- * - KeyService.refreshAfterPairing() : retente un bootstrap (utilisé après appairage)
- */
-import * as KeyService from "./crypto/KeyService";
 
 type SoignantView =
   | "dashboard"
@@ -51,24 +39,13 @@ type SoignantView =
   | "tickets_collab"
   | "tickets_admin";
 
-/** Lis proprement les paramètres d’URL : on gère à la fois ?type=... et #type=... */
-function parseAuthParams(): Record<string, string> {
+// --- utilitaire pour lire le hash Supabase
+function parseHash(): Record<string, string> {
   if (typeof window === "undefined") return {};
+  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+  const params = new URLSearchParams(hash);
   const out: Record<string, string> = {};
-
-  // 1) query string (?type=invite|recovery)
-  const search = new URLSearchParams(window.location.search);
-  search.forEach((v, k) => (out[k] = v));
-
-  // 2) hash (#type=invite|recovery&...)
-  const rawHash = window.location.hash.startsWith("#")
-    ? window.location.hash.slice(1)
-    : window.location.hash;
-  const hashParams = new URLSearchParams(rawHash);
-  hashParams.forEach((v, k) => {
-    if (!out[k]) out[k] = v;
-  });
-
+  params.forEach((v, k) => (out[k] = v));
   return out;
 }
 
@@ -89,46 +66,10 @@ function AppContent() {
   // détection des liens d'invitation/récupération
   const [authType, setAuthType] = useState<"invite" | "recovery" | null>(null);
   useEffect(() => {
-    const p = parseAuthParams();
-    const t = (p["type"] as "invite" | "recovery" | undefined) || null;
+    const h = parseHash();
+    const t = (h["type"] as "invite" | "recovery" | undefined) || null;
     if (t === "invite" || t === "recovery") setAuthType(t);
   }, []);
-
-  // 🔐 état bootstrap des clés locales / DEK
-  const [keysState, setKeysState] = useState<
-    { status: "idle" | "bootstrapping" | "ready" | "missing_share" | "error"; message?: string; deviceId?: string }
-  >({ status: "idle" });
-
-  // Bootstrap DEK dès que l’utilisateur est connecté, hors page SetInitialPassword
-  useEffect(() => {
-    const run = async () => {
-      if (loading) return;
-      // si pas de user => rien à faire ici
-      if (!user || !userBase) return;
-
-      // ne pas démarrer le bootstrap quand on set le mot de passe (invite/recovery)
-      const p = parseAuthParams();
-      const t = (p["type"] as "invite" | "recovery" | undefined) || null;
-      if (t === "invite" || t === "recovery") return;
-
-      setKeysState({ status: "bootstrapping" });
-      try {
-        const res = await KeyService.bootstrapDEK();
-        if (res?.ok) {
-          setKeysState({ status: "ready" });
-        } else {
-          setKeysState({ status: "error", message: "État inattendu du bootstrap." });
-        }
-      } catch (e: any) {
-        if (e?.code === "MISSING_SHARE") {
-          setKeysState({ status: "missing_share", deviceId: e?.deviceId });
-        } else {
-          setKeysState({ status: "error", message: e?.message || "Erreur initialisation sécurité." });
-        }
-      }
-    };
-    run();
-  }, [loading, user, userBase]);
 
   // vue par défaut soignant
   useEffect(() => {
@@ -143,7 +84,6 @@ function AppContent() {
     }
   }, [loading, userBase, isAdmin, isAssistant]);
 
-  // === états de chargement / auth ===
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -152,7 +92,7 @@ function AppContent() {
     );
   }
 
-  // cas 1 : lien d’invitation ou de réinitialisation (affiche le composant de MDP initial)
+  // cas 1 : lien d’invitation ou de réinitialisation
   if (authType && user) {
     return <SetInitialPassword mode={authType} onDone={() => setAuthType(null)} />;
   }
@@ -166,53 +106,6 @@ function AppContent() {
       <Login onSwitchToSignup={() => setShowSignup(true)} />
     );
   }
-
-  // cas 3 : utilisateur connecté mais DEK pas prête
-  if (keysState.status === "bootstrapping") {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center space-y-2">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto"></div>
-          <p className="text-gray-700">Initialisation de la sécurité…</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (keysState.status === "missing_share") {
-    return <PairingScreen deviceId={keysState.deviceId} onRetry={async () => {
-      setKeysState({ status: "bootstrapping" });
-      try {
-        const res = await KeyService.refreshAfterPairing();
-        if (res?.ok) setKeysState({ status: "ready" });
-        else setKeysState({ status: "error", message: "État inattendu du bootstrap." });
-      } catch (e: any) {
-        if (e?.code === "MISSING_SHARE") setKeysState({ status: "missing_share", deviceId: e?.deviceId });
-        else setKeysState({ status: "error", message: e?.message || "Erreur initialisation sécurité." });
-      }
-    }} />;
-  }
-
-  if (keysState.status === "error") {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-white rounded-xl shadow p-6 space-y-4">
-          <h2 className="text-xl font-semibold text-gray-900">Erreur d’initialisation</h2>
-          <p className="text-sm text-gray-700">{keysState.message || "Une erreur inconnue est survenue."}</p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg"
-            >
-              Réessayer
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // === Ici, l’utilisateur est connecté ET la clé (DEK) est prête ===
 
   /** navigation principale */
   const handleNavigate = (view: string) => {
@@ -291,11 +184,7 @@ function AppContent() {
         );
 
       case "analyse":
-        return isAdmin ? (
-          <AdminAnalytics onOpenDashboardWithFilters={openDashboardWithFilters} />
-        ) : (
-          <PatientsList onSelectPatient={handleSelectPatient} />
-        );
+        return isAdmin ? <AdminAnalytics onOpenDashboardWithFilters={openDashboardWithFilters} /> : <PatientsList onSelectPatient={handleSelectPatient} />;
 
       case "patients":
         return <PatientsList onSelectPatient={handleSelectPatient} />;
@@ -333,18 +222,14 @@ function AppContent() {
         );
 
       case "tickets_admin":
-        return isAdmin ? (
-          <TicketsAdmin onOpenPatient={openPatientById} onOpenDossier={openDossierById} />
-        ) : (
-          <PatientsList onSelectPatient={handleSelectPatient} />
-        );
+        return isAdmin ? <TicketsAdmin onOpenPatient={openPatientById} onOpenDossier={openDossierById} /> : <PatientsList onSelectPatient={handleSelectPatient} />;
 
       default:
         return <PatientsList onSelectPatient={handleSelectPatient} />;
     }
   };
 
-  // ==== rendu final par type de client ====
+  // ==== rendu final ====
   if (userBase.type_client === "soignant") {
     return (
       <SoignantLayout currentView={currentView} onNavigate={handleNavigate}>
@@ -369,63 +254,5 @@ export default function App() {
     <AuthProvider>
       <AppContent />
     </AuthProvider>
-  );
-}
-
-/* ============================================================
- * Écran d’appairage quand le share DEK du device est manquant
- * ============================================================ */
-function PairingScreen({ deviceId, onRetry }: { deviceId?: string; onRetry: () => Promise<void> }) {
-  const { user } = useAuth();
-  const [payload, setPayload] = useState<string>("");
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const p = await KeyService.getPairingPayload(); // { user_id, device_id, nonce }
-        setPayload(JSON.stringify(p, null, 2));
-      } catch {
-        setPayload(JSON.stringify({ user_id: user?.id, device_id: deviceId || "unknown" }, null, 2));
-      }
-    })();
-  }, [user?.id, deviceId]);
-
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-teal-50 via-white to-blue-50">
-      <div className="bg-white w-full max-w-2xl rounded-2xl shadow-xl p-6 space-y-5">
-        <h1 className="text-2xl font-bold text-gray-900">Appairer cet appareil</h1>
-        <p className="text-gray-700">
-          Pour déverrouiller les données chiffrées, validez cet appareil depuis un autre appareil déjà approuvé
-          (ou demandez à un admin autorisé). Collez ou scannez le “code d’appairage” ci-dessous sur l’appareil approuvé.
-        </p>
-
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-          <pre className="text-xs overflow-auto leading-5">{payload}</pre>
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => navigator.clipboard.writeText(payload)}
-            className="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 transition"
-          >
-            Copier
-          </button>
-          <button
-            type="button"
-            onClick={onRetry}
-            className="px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white transition"
-          >
-            J’ai appairé — Réessayer
-          </button>
-        </div>
-
-        <div className="text-sm text-gray-600">
-          <p>
-            ID de l’appareil : <span className="font-mono">{deviceId || "inconnu"}</span>
-          </p>
-        </div>
-      </div>
-    </div>
   );
 }
