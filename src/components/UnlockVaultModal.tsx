@@ -18,15 +18,29 @@ export default function UnlockVaultModal() {
     (async () => {
       if (!user || !userBase) return;
       setError(null);
-      const { data: v } = await supabase.rpc("active_tmk_version");
+
+      // 1) quelle version active ?
+      const { data: v, error: eV } = await supabase.rpc("active_tmk_version");
+      if (eV) {
+        setError(eV.message);
+        setHasPassWrap(null);
+        return;
+      }
       const activeVersion: number | null = v ?? null;
 
+      // 2) si aucune version, on indiquera "création" (admin)
       if (!activeVersion) {
-        // il n’y a pas encore de TMK: seul un admin pourra la créer
         setHasPassWrap(false);
         return;
       }
-      const { data: wraps } = await supabase.rpc("get_my_tmk_wraps");
+
+      // 3) l'utilisateur a-t-il une enveloppe passphrase pour cette version ?
+      const { data: wraps, error: eW } = await supabase.rpc("get_my_tmk_wraps");
+      if (eW) {
+        setError(eW.message);
+        setHasPassWrap(null);
+        return;
+      }
       const has = (wraps as any[] | null)?.some(
         (r) => r.tmk_version === activeVersion && r.device_bound === false
       );
@@ -40,7 +54,7 @@ export default function UnlockVaultModal() {
     e.preventDefault();
     setError(null);
 
-    // hard check PIN 6 chiffres
+    // Validation stricte PIN 6 chiffres
     if (!/^\d{6}$/.test(pin)) {
       setError("Le code secret doit contenir exactement 6 chiffres.");
       return;
@@ -48,17 +62,30 @@ export default function UnlockVaultModal() {
 
     try {
       if (hasPassWrap) {
+        // Déverrouiller la TMK existante
         await unlockWithPassphrase(pin);
-      } else {
-        // Si aucune TMK active: seul un admin peut créer la v1 + l’enveloppe
-        if (!isAdmin) {
-          setError("Le coffre n'est pas encore initialisé. Un administrateur doit d'abord l'initialiser.");
-          return;
-        }
-        // s'assure que v1 existe (si besoin)
-        await supabase.rpc("rotate_tmk_version").catch(() => {});
-        await createInitialVaultWithPassphrase(pin);
+        return;
       }
+
+      // Pas d’enveloppe côté utilisateur => création initiale
+      if (!isAdmin) {
+        setError("Le coffre n'est pas encore initialisé. Un administrateur doit d'abord l'initialiser.");
+        return;
+      }
+
+      // S’assurer qu’une version TMK active existe (création v1 au besoin)
+      const { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
+      let activeVersion: number | null = vActive ?? null;
+      if (eActive) throw eActive;
+
+      if (!activeVersion) {
+        const { data: vNew, error: eNew } = await supabase.rpc("rotate_tmk_version");
+        if (eNew) throw eNew;
+        activeVersion = vNew ?? 1;
+      }
+
+      // Créer la TMK et l’enveloppe passphrase pour l’utilisateur courant (admin)
+      await createInitialVaultWithPassphrase(pin);
     } catch (err: any) {
       setError(err?.message || "Erreur");
     }
@@ -79,7 +106,6 @@ export default function UnlockVaultModal() {
           Il n’est <em>pas</em> stocké côté serveur. Sans ce code, les données chiffrées ne peuvent pas être récupérées.
         </div>
 
-        {/* Champ PIN 6 chiffres */}
         {(showCreate || hasPassWrap) && (
           <>
             <input
@@ -102,7 +128,6 @@ export default function UnlockVaultModal() {
               {unlocking ? "..." : showCreate ? "Créer et ouvrir" : "Déverrouiller"}
             </button>
 
-            {/* Info admin si coffre non initialisé */}
             {showCreate && !isAdmin && (
               <p className="text-xs text-gray-500 mt-2">
                 Seul un administrateur peut initialiser le coffre. Contactez votre administrateur.
