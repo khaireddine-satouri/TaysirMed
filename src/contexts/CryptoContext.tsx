@@ -93,7 +93,6 @@ function parseKdfParams(raw: any): { kdf: string; iters?: number } {
 
 /** Encodage base64 sûr pour envoi RPC */
 function bytesToB64(u8: Uint8Array): string {
-  // btoa sur string binaire
   let s = "";
   for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
   return btoa(s);
@@ -101,6 +100,16 @@ function bytesToB64(u8: Uint8Array): string {
 
 /** MAGIC header pour valider le plaintext déchiffré */
 const MAGIC = new TextEncoder().encode("VAULTv1"); // 7 octets; versionnable
+
+/** KCV = SHA-256("KCV:" || TMK) */
+async function computeKcv(tmk: Uint8Array): Promise<Uint8Array> {
+  const prefix = new TextEncoder().encode("KCV:");
+  const msg = new Uint8Array(prefix.length + tmk.length);
+  msg.set(prefix, 0);
+  msg.set(tmk, prefix.length);
+  const digest = await crypto.subtle.digest("SHA-256", msg);
+  return new Uint8Array(digest);
+}
 
 export function CryptoProvider({ children }: { children: ReactNode }) {
   const { user, userBase } = useAuth();
@@ -166,7 +175,23 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       }
       const tmkRaw = payload.slice(MAGIC.length, MAGIC.length + 32);
 
-      console.log("[Crypto] Unlocked: payloadLen=", payload.length, "tmkLen=", tmkRaw.length);
+      // 5) Vérification KCV (comparée à celle en base)
+      const kcvDb = toU8((row as any).kcv);
+      if (kcvDb.length > 0) {
+        const kcvLocal = await computeKcv(tmkRaw);
+        if (kcvLocal.length !== kcvDb.length) {
+          throw new Error("Code secret incorrect (KCV size mismatch).");
+        }
+        for (let i = 0; i < kcvDb.length; i++) {
+          if (kcvLocal[i] !== kcvDb[i]) {
+            throw new Error("Code secret incorrect."); // KCV mismatch
+          }
+        }
+      } else {
+        // (Anciennes enveloppes sans KCV) — on tolère mais LOG
+        console.warn("[Crypto] Aucune KCV en base pour cette enveloppe; pensez à régénérer.");
+      }
+
       setState({ tmk: tmkRaw, version: activeVersion, unlocking: false });
     } catch (err) {
       console.error("unlockWithPassphrase error:", err);
@@ -181,14 +206,12 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
-      console.log("[Crypto] Create: start");
       // 1) S'assurer qu'une version active existe (et la créer si besoin)
       let { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
       if (eActive) throw eActive;
       let activeVersion: number | null = vActive ?? null;
 
       if (!activeVersion) {
-        console.log("[Crypto] No active version -> rotate");
         const { data: vNew, error: eNew } = await supabase.rpc("rotate_tmk_version");
         if (eNew) throw eNew;
         activeVersion = (vNew ?? null) as number | null;
@@ -204,15 +227,14 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       if (!activeVersion) {
         throw new Error("Impossible d'initialiser la TMK (version active absente).");
       }
-      console.log("[Crypto] Active version =", activeVersion);
 
       // 2) Génère TMK + KEK (PIN)
       const tmk = randomBytes(32);
       const salt = randomBytes(16);
-      const iterations = 310_000; // durcissable à 600_000
+
+      const iterations = 310_000; // passe à 600_000 si tu veux durcir
       const { kek } = await kdfPBKDF2(pin6, salt, iterations);
       const kdfParams = { kdf: "pbkdf2", iters: iterations };
-      console.log("[Crypto] KDF ok (iters=", iterations, "), saltLen=", salt.length);
 
       // 3) Construire payload = MAGIC || TMK
       const payload = new Uint8Array(MAGIC.length + tmk.length);
@@ -229,11 +251,11 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       wrap.set(iv, 0);
       wrap.set(ct, iv.length);
 
-      console.log("[Crypto] Wrapped: ivLen=", iv.length, "ctLen=", ct.length, "wrapLen=", wrap.length);
-
-      // 5) RPC upsert en **base64** (fiable)
+      // 5) Calcul KCV et RPC upsert en **base64**
+      const kcv = await computeKcv(tmk);
       const wrapB64 = bytesToB64(wrap);
       const saltB64 = bytesToB64(salt);
+      const kcvB64 = bytesToB64(kcv);
 
       const { error } = await supabase.rpc("upsert_my_tmk_wrap_b64", {
         p_tmk_version: activeVersion,
@@ -243,16 +265,14 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
         p_salt_b64: saltB64,
         p_device_bound: false,
         p_device_id: null,
+        p_kcv_b64: kcvB64,
       });
       if (error) {
         console.error("upsert_my_tmk_wrap_b64 error:", error);
         throw error;
       }
-      console.log("[Crypto] RPC upsert_my_tmk_wrap_b64 ok");
 
-      // 6) Pose en mémoire
       setState({ tmk, version: activeVersion, unlocking: false });
-      console.log("[Crypto] Created + unlocked, tmkLen=", tmk.length);
     } catch (err) {
       console.error("createInitialVaultWithPassphrase error:", err);
       setState((s) => ({ ...s, unlocking: false }));
