@@ -9,7 +9,7 @@ import {
 } from "react";
 import { supabase } from "../lib/supabase";
 import {
-  kdfPBKDF2,  // tu peux monter à 600_000 itérations côté cryptoClient.ts si tu veux
+  kdfPBKDF2,        // tu peux augmenter les itérations dans cryptoClient.ts si besoin
   wrapWithKEK,
   unwrapWithKEK,
   randomBytes,
@@ -36,16 +36,32 @@ const CryptoContext = createContext<CryptoCtx>({
   lock: () => {},
 });
 
+/** Convertit divers formats (Uint8Array, number[], {type:"Buffer",data}, hex \x..., base64url) en Uint8Array */
 function toU8(v: any): Uint8Array {
   if (!v) return new Uint8Array();
   if (v instanceof Uint8Array) return v;
-  // PostgREST peut renvoyer { type: 'Buffer', data: [...] }
-  if (typeof v === "object" && "type" in v && v.type === "Buffer" && Array.isArray((v as any).data)) {
-    return new Uint8Array((v as any).data);
+
+  // { type: 'Buffer', data: [...] }
+  if (typeof v === "object" && v.type === "Buffer" && Array.isArray(v.data)) {
+    return new Uint8Array(v.data);
   }
+
+  // number[]
   if (Array.isArray(v)) return new Uint8Array(v as number[]);
+
+  // string: hex ("\x...") ou base64/base64url
   if (typeof v === "string") {
-    // essaye base64/base64url
+    // hex postgres
+    if (v.startsWith("\\x")) {
+      const hex = v.slice(2);
+      if (hex.length % 2 !== 0) return new Uint8Array();
+      const out = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < hex.length; i += 2) {
+        out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+      }
+      return out;
+    }
+    // base64/base64url
     let s = v.replace(/-/g, "+").replace(/_/g, "/");
     const pad = s.length % 4 ? 4 - (s.length % 4) : 0;
     s = s + "=".repeat(pad);
@@ -55,11 +71,12 @@ function toU8(v: any): Uint8Array {
       for (let i = 0; i < bstr.length; i++) arr[i] = bstr.charCodeAt(i);
       return arr;
     } catch {
-      console.error("toU8: string not base64/b64url decodable");
+      console.error("toU8: chaîne non décodable (ni hex ni base64)");
       return new Uint8Array();
     }
   }
-  console.error("toU8: unsupported type", typeof v, v);
+
+  console.error("toU8: type non supporté", typeof v, v);
   return new Uint8Array();
 }
 
@@ -71,7 +88,7 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
     unlocking: boolean;
   }>({ tmk: null, version: null, unlocking: false });
 
-  // Reset coffre en changeant d’utilisateur/tenant
+  // Reset coffre quand l'utilisateur/tenant change
   useEffect(() => {
     setState({ tmk: null, version: null, unlocking: false });
   }, [user?.id, userBase?.client_id]);
@@ -82,11 +99,13 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
+      // Version active
       const { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
       if (eActive) throw eActive;
       const activeVersion: number | null = vActive ?? null;
       if (!activeVersion) throw new Error("Aucune TMK active. Demandez à un administrateur d'initialiser le coffre.");
 
+      // Enveloppes de l'utilisateur
       const { data: wraps, error: eWraps } = await supabase.rpc("get_my_tmk_wraps");
       if (eWraps) throw eWraps;
 
@@ -96,9 +115,17 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       if (!row) throw new Error("Aucune enveloppe TMK liée à votre code secret.");
 
       const salt = toU8(row.salt);
+      if (salt.length < 8) {
+        console.warn("Salt inhabituel (court):", salt.length);
+      }
       const { kek } = await kdfPBKDF2(pin6, salt);
 
       const wrap = toU8(row.tmk_wrap);
+      if (wrap.length < 28) {
+        // 12 IV + 16 tag + au moins quelques octets payload
+        console.error("Wrap trop court:", { wrapLen: wrap.length, row });
+        throw new Error("Données de clé invalides (wrap incomplet).");
+      }
       const iv = wrap.slice(0, 12);
       const ct = wrap.slice(12);
       const aad = new TextEncoder().encode(`${userBase.client_id}:${user.id}:${activeVersion}`);
@@ -118,21 +145,25 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
 
     setState((s) => ({ ...s, unlocking: true }));
     try {
+      // Version active requise
       const { data: vActive, error: eActive } = await supabase.rpc("active_tmk_version");
       if (eActive) throw eActive;
       const activeVersion: number | null = vActive ?? null;
       if (!activeVersion) throw new Error("La TMK n'est pas initialisée. Un administrateur doit créer la version active.");
 
+      // Génère TMK + KEK
       const tmk = randomBytes(32);
       const salt = randomBytes(16);
       const { kek, params } = await kdfPBKDF2(pin6, salt);
 
+      // Enveloppe TMK
       const aad = new TextEncoder().encode(`${userBase.client_id}:${user.id}:${activeVersion}`);
       const { iv, ct } = await wrapWithKEK(kek, tmk, aad);
       const wrap = new Uint8Array(iv.length + ct.length);
       wrap.set(iv, 0);
       wrap.set(ct, iv.length);
 
+      // RPC: bytea -> number[]
       const wrapArr = Array.from(wrap);
       const saltArr = Array.from(salt);
 
